@@ -123,3 +123,12 @@ python3 scripts/m0_05_grok_media.py
 
 要求本机已登录 `grok` CLI。对文本 / 生图 / 改图 / 图生视频分别给出 `ready|degraded|unavailable`，媒体必须落盘并可解码。  
 说明见 [docs/spikes/M0-05-grok-media.md](./docs/spikes/M0-05-grok-media.md)。
+
+### M0-08 FFmpeg 竖屏母版
+
+```bash
+python3 scripts/m0_08_ffmpeg_master.py
+```
+
+合成测试资产并输出 1080×1920、90s 内、含字幕混音的 H.264/AAC 样片。  
+说明见 [docs/spikes/M0-08-ffmpeg-master.md](./docs/spikes/M0-08-ffmpeg-master.md)。

@@ -28,6 +28,7 @@ apps/desktop/src-tauri/binaries/workflow-sidecar-*
 artifacts/*.png
 artifacts/m0-04/
 artifacts/m0-05/
+artifacts/m0-08/
 
 # Ephemeral local tool envs
 .tmp/
