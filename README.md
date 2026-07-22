@@ -114,3 +114,12 @@ python3 scripts/m0_04_codex_structured.py --runs 10
 
 要求本机已登录 `codex` CLI。验收：连续 10 次 `--output-schema` 结果通过校验。  
 说明见 [docs/spikes/M0-04-codex-structured.md](./docs/spikes/M0-04-codex-structured.md)。
+
+### M0-05 Grok 文本与媒体
+
+```bash
+python3 scripts/m0_05_grok_media.py
+```
+
+要求本机已登录 `grok` CLI。对文本 / 生图 / 改图 / 图生视频分别给出 `ready|degraded|unavailable`，媒体必须落盘并可解码。  
+说明见 [docs/spikes/M0-05-grok-media.md](./docs/spikes/M0-05-grok-media.md)。

@@ -27,6 +27,7 @@ apps/desktop/src-tauri/binaries/workflow-sidecar-*
 # Local visual QA / spike evidence
 artifacts/*.png
 artifacts/m0-04/
+artifacts/m0-05/
 
 # Ephemeral local tool envs
 .tmp/
