@@ -1,0 +1,32 @@
+# Frontend
+apps/desktop/node_modules/
+apps/desktop/dist/
+apps/desktop/coverage/
+apps/desktop/*.tsbuildinfo
+
+# Rust
+apps/desktop/src-tauri/target/
+target/
+
+# Python
+services/sidecar/.venv/
+services/sidecar/.pytest_cache/
+services/sidecar/.coverage
+services/sidecar/htmlcov/
+services/sidecar/build/
+services/sidecar/dist/
+**/__pycache__/
+*.py[cod]
+
+# Generated/bundled sidecar executables
+apps/desktop/src-tauri/binaries/workflow-sidecar-*
+
+# macOS
+.DS_Store
+
+# Local visual QA / spike evidence
+artifacts/*.png
+artifacts/m0-04/
+
+# Ephemeral local tool envs
+.tmp/

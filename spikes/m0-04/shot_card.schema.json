@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ShotCard",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["shot_id", "scene", "action", "camera", "dialogue", "duration_sec", "confidence"],
+  "properties": {
+    "shot_id": { "type": "string", "minLength": 1, "maxLength": 32 },
+    "scene": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "action": { "type": "string", "minLength": 1, "maxLength": 240 },
+    "camera": {
+      "type": "string",
+      "enum": ["wide", "medium", "close-up", "extreme-close-up", "over-shoulder", "insert"]
+    },
+    "dialogue": { "type": "string", "maxLength": 200 },
+    "duration_sec": { "type": "number", "minimum": 0.5, "maximum": 12 },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+  }
+}
