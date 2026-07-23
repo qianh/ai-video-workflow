@@ -29,6 +29,7 @@ artifacts/*.png
 artifacts/m0-04/
 artifacts/m0-05/
 artifacts/m0-08/
+artifacts/m0-09/
 
 # Ephemeral local tool envs
 .tmp/

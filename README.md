@@ -132,3 +132,12 @@ python3 scripts/m0_08_ffmpeg_master.py
 
 合成测试资产并输出 1080×1920、90s 内、含字幕混音的 H.264/AAC 样片。  
 说明见 [docs/spikes/M0-08-ffmpeg-master.md](./docs/spikes/M0-08-ffmpeg-master.md)。
+
+### M0-09 music-downloader
+
+```bash
+python3 scripts/m0_09_music_downloader.py
+```
+
+强制写入任务暂存目录，并断言默认 `~/Music/Downloads` 无新增文件。  
+说明见 [docs/spikes/M0-09-music-downloader.md](./docs/spikes/M0-09-music-downloader.md)。
