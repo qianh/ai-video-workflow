@@ -6,11 +6,17 @@ import json
 import re
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 from .database import Database, open_database
-from .migrations import GLOBAL_MIGRATIONS, PROJECT_MIGRATIONS, apply_migrations
+from .migrations import (
+    GLOBAL_MIGRATIONS,
+    PROJECT_MIGRATIONS,
+    apply_migrations,
+    current_version,
+)
+from .snapshots import create_db_snapshot
+from .timeutil import utc_now
 
 PROJECT_DIRS = (
     "sources/normalized",
@@ -29,10 +35,6 @@ PROJECT_DIRS = (
     "logs",
     "manifests",
 )
-
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
 def slugify(name: str) -> str:
@@ -57,11 +59,15 @@ class WorkspaceService:
     """Owns global.db and at most one open project.db connection."""
 
     def __init__(self, global_db_path: Path) -> None:
-        self._global_db_path = global_db_path
-        self._global = open_database(global_db_path)
+        self._global_db_path = Path(global_db_path)
+        self._global = open_database(self._global_db_path)
         apply_migrations(self._global, GLOBAL_MIGRATIONS)
         self._project: Database | None = None
         self._current: ProjectRecord | None = None
+
+    @property
+    def global_db_path(self) -> Path:
+        return self._global_db_path
 
     @property
     def current(self) -> ProjectRecord | None:
@@ -160,6 +166,13 @@ class WorkspaceService:
         self.close_project()
         project_db = open_database(db_path)
         try:
+            before = current_version(project_db)
+            target = max((version for version, _ in PROJECT_MIGRATIONS), default=0)
+            if before < target:
+                create_db_snapshot(
+                    root,
+                    reason=f"pre-migration-v{before}-to-v{target}",
+                )
             version = apply_migrations(project_db, PROJECT_MIGRATIONS)
             identity = project_db.fetchone(
                 "SELECT value_json FROM project_meta WHERE key = 'identity'"

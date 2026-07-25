@@ -8,7 +8,15 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .persistence import JobQueue, WorkspaceService
+from .persistence import (
+    JobQueue,
+    WorkspaceService,
+    create_db_snapshot,
+    default_global_env_path,
+    list_snapshots,
+    resolve_task_env,
+    summarize_env,
+)
 from .protocol import Request, error_response, event, success_response
 
 
@@ -146,6 +154,14 @@ class SidecarRuntime:
 
         if request.method.startswith("job."):
             await self._execute_job(request)
+            return
+
+        if request.method.startswith("env."):
+            await self._execute_env(request)
+            return
+
+        if request.method.startswith("snapshot."):
+            await self._execute_snapshot(request)
             return
 
         if self._enable_test_methods and request.method == "diagnostics.count":
@@ -288,6 +304,103 @@ class SidecarRuntime:
         if method == "job.reclaim_expired":
             count = queue.reclaim_expired()
             self._emit(success_response(request.id, {"reclaimed": count}))
+            return
+
+        self._emit(
+            error_response(
+                request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
+            )
+        )
+
+    def _project_root(self) -> Path | None:
+        current = self._workspace.current
+        if current is None:
+            return None
+        return Path(current.root_path)
+
+    def _global_env_path(self) -> Path:
+        return default_global_env_path(self._workspace.global_db_path)
+
+    async def _execute_env(self, request: Request) -> None:
+        method = request.method
+        params = request.params
+        project_root = self._project_root()
+        global_env_path = self._global_env_path()
+
+        if method == "env.summary":
+            keys = params.get("keys")
+            if keys is not None:
+                if not isinstance(keys, list) or not all(
+                    isinstance(item, str) for item in keys
+                ):
+                    raise ValueError("keys must be a string array")
+            bindings = summarize_env(
+                project_root=project_root,
+                global_env_path=global_env_path,
+                keys=keys,
+            )
+            self._emit(
+                success_response(
+                    request.id,
+                    {
+                        "bindings": [
+                            {
+                                "key": item.key,
+                                "source": item.source,
+                                "is_secret": item.is_secret,
+                                "set": item.set,
+                            }
+                            for item in bindings
+                        ]
+                    },
+                )
+            )
+            return
+
+        if method == "env.resolve":
+            # Only return explicitly allowed keys — never dump full environment.
+            allow_keys = params.get("allow_keys")
+            if not isinstance(allow_keys, list) or not allow_keys:
+                raise ValueError("allow_keys must be a non-empty string array")
+            if not all(isinstance(item, str) for item in allow_keys):
+                raise ValueError("allow_keys must be a string array")
+            values = resolve_task_env(
+                project_root=project_root,
+                global_env_path=global_env_path,
+                allow_keys=allow_keys,
+            )
+            self._emit(success_response(request.id, {"values": values}))
+            return
+
+        self._emit(
+            error_response(
+                request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
+            )
+        )
+
+    async def _execute_snapshot(self, request: Request) -> None:
+        method = request.method
+        params = request.params
+        current = self._workspace.current
+        if current is None:
+            raise ValueError("no project is open")
+        root = Path(current.root_path)
+
+        if method == "snapshot.create":
+            reason = params.get("reason", "manual")
+            if not isinstance(reason, str) or not reason.strip():
+                raise ValueError("reason must be a non-empty string")
+            info = create_db_snapshot(root, reason=reason.strip())
+            self._emit(success_response(request.id, info.as_dict()))
+            return
+
+        if method == "snapshot.list":
+            items = list_snapshots(root)
+            self._emit(
+                success_response(
+                    request.id, {"snapshots": [item.as_dict() for item in items]}
+                )
+            )
             return
 
         self._emit(

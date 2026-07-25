@@ -11,11 +11,16 @@
 - Python 源码开发模式和 PyInstaller arm64 单文件构建。
 - M0 状态页，可执行 Ping、进度、取消和受控崩溃恢复验证。
 - **M1 底座**：`global.db` / `project.db` 迁移、项目创建/打开/关闭/最近列表、持久任务队列（租约/重试/暂停/取消）。
+- 环境合并：项目 `.env.local` > 全局 `env` 文件 > 进程环境；`env.summary` 不回显密钥。
+- 迁移前自动轻量快照（`project.db` → `snapshots/`）；支持 `snapshot.create` / `list`。
 - 桌面 UI 含项目工作区面板（创建、最近打开、演示任务入队）。
 
 项目 RPC：`project.create` / `open` / `close` / `current` / `list_recent`。  
 任务 RPC：`job.enqueue` / `get` / `list` / `claim` / `complete` / `fail` / `cancel` / `pause` / `resume` / `reclaim_expired`。  
-全局库默认路径：`~/.ai-video-workflow/global.db`（可用 `WORKFLOW_GLOBAL_DB` 覆盖）。
+环境 RPC：`env.summary`、`env.resolve`（必须传 `allow_keys`）。  
+快照 RPC：`snapshot.create`、`snapshot.list`。  
+全局库默认路径：`~/.ai-video-workflow/global.db`（可用 `WORKFLOW_GLOBAL_DB` 覆盖）。  
+全局 env 文件：与 `global.db` 同目录的 `env`。
 
 ## 环境要求
 

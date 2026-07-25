@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .database import Database
-from .workspace import utc_now
+from .timeutil import utc_now
 
 VALID_STATUSES = frozenset(
     {"queued", "running", "paused", "succeeded", "failed", "cancelled"}
