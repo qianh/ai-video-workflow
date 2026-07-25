@@ -13,10 +13,11 @@ SIDECAR_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
-def sidecar() -> subprocess.Popen[str]:
+def sidecar(tmp_path: Path) -> subprocess.Popen[str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(SIDECAR_ROOT / "src")
     env["WORKFLOW_SIDECAR_ENABLE_TEST_METHODS"] = "1"
+    env["WORKFLOW_GLOBAL_DB"] = str(tmp_path / "global.db")
     process = subprocess.Popen(
         [sys.executable, "-m", "workflow_sidecar"],
         cwd=SIDECAR_ROOT,
@@ -29,8 +30,12 @@ def sidecar() -> subprocess.Popen[str]:
     )
     yield process
     if process.poll() is None:
-        process.terminate()
+        if process.stdin is not None:
+            process.stdin.close()
         process.wait(timeout=5)
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=5)
 
 
 def send(process: subprocess.Popen[str], message: dict[str, object]) -> None:

@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 import os
+from pathlib import Path
 from typing import Any
 
+from .persistence import WorkspaceService
 from .protocol import Request, error_response, event, success_response
 
 
@@ -14,13 +16,30 @@ Message = dict[str, Any]
 Emitter = Callable[[Message], None]
 
 
+def default_global_db_path() -> Path:
+    override = os.environ.get("WORKFLOW_GLOBAL_DB")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".ai-video-workflow" / "global.db"
+
+
 class SidecarRuntime:
     """Runs requests without coupling protocol transport to business handlers."""
 
-    def __init__(self, emit: Emitter, *, enable_test_methods: bool = False) -> None:
+    def __init__(
+        self,
+        emit: Emitter,
+        *,
+        enable_test_methods: bool = False,
+        global_db_path: Path | None = None,
+    ) -> None:
         self._emit = emit
         self._enable_test_methods = enable_test_methods
         self._active: dict[str, asyncio.Task[None]] = {}
+        self._workspace = WorkspaceService(global_db_path or default_global_db_path())
+
+    async def shutdown(self) -> None:
+        self._workspace.close()
 
     async def handle(self, request: Request) -> None:
         if request.method == "request.cancel":
@@ -69,6 +88,58 @@ class SidecarRuntime:
                         "protocol_version": 1,
                         "echo": request.params.get("echo"),
                     },
+                )
+            )
+            return
+
+        if request.method == "project.create":
+            parent_dir = request.params.get("parent_dir")
+            name = request.params.get("name")
+            if not isinstance(parent_dir, str) or not parent_dir:
+                raise ValueError("parent_dir must be a non-empty string")
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("name must be a non-empty string")
+            record = self._workspace.create_project(parent_dir, name)
+            self._emit(success_response(request.id, record.as_dict()))
+            return
+
+        if request.method == "project.open":
+            root_dir = request.params.get("root_dir")
+            if not isinstance(root_dir, str) or not root_dir:
+                raise ValueError("root_dir must be a non-empty string")
+            record = self._workspace.open_project(root_dir)
+            self._emit(success_response(request.id, record.as_dict()))
+            return
+
+        if request.method == "project.close":
+            previous = self._workspace.close_project()
+            self._emit(
+                success_response(
+                    request.id,
+                    {"closed": previous.as_dict() if previous else None},
+                )
+            )
+            return
+
+        if request.method == "project.current":
+            current = self._workspace.current
+            self._emit(
+                success_response(
+                    request.id,
+                    {"project": current.as_dict() if current else None},
+                )
+            )
+            return
+
+        if request.method == "project.list_recent":
+            limit = request.params.get("limit", 20)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            projects = self._workspace.list_recent(limit)
+            self._emit(
+                success_response(
+                    request.id,
+                    {"projects": [item.as_dict() for item in projects]},
                 )
             )
             return

@@ -45,3 +45,4 @@ async def serve() -> None:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+    await runtime.shutdown()
