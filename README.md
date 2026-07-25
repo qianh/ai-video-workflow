@@ -102,7 +102,7 @@ npm run tauri build -- --debug --no-bundle
 - Sidecar 退出时，所有等待中的请求明确失败。
 - 监督器不会自动重放失败请求；下一请求会启动新进程。
 
-详细决策见 [ADR-001](./docs/adr/ADR-001-stdio-ndjson-rpc.md)。
+架构决策见 [docs/adr/](./docs/adr/README.md)（ADR-001～008）。
 
 ## 供应商 Spike
 
