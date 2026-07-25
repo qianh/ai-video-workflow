@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .persistence import WorkspaceService
+from .persistence import JobQueue, WorkspaceService
 from .protocol import Request, error_response, event, success_response
 
 
@@ -144,6 +144,10 @@ class SidecarRuntime:
             )
             return
 
+        if request.method.startswith("job."):
+            await self._execute_job(request)
+            return
+
         if self._enable_test_methods and request.method == "diagnostics.count":
             await self._count(request)
             return
@@ -151,6 +155,140 @@ class SidecarRuntime:
         if self._enable_test_methods and request.method == "diagnostics.crash":
             exit_code = self._bounded_int(request.params, "exit_code", 1, 255, 70)
             os._exit(exit_code)
+
+        self._emit(
+            error_response(
+                request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
+            )
+        )
+
+    def _jobs(self) -> JobQueue:
+        return JobQueue(self._workspace.require_project_db())
+
+    async def _execute_job(self, request: Request) -> None:
+        queue = self._jobs()
+        method = request.method
+        params = request.params
+
+        if method == "job.enqueue":
+            kind = params.get("kind")
+            if not isinstance(kind, str):
+                raise ValueError("kind must be a string")
+            payload = params.get("payload") or {}
+            if not isinstance(payload, dict):
+                raise ValueError("payload must be an object")
+            max_attempts = params.get("max_attempts", 3)
+            if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
+                raise ValueError("max_attempts must be an integer")
+            job = queue.enqueue(kind, payload, max_attempts=max_attempts)
+            self._emit(success_response(request.id, job.as_dict()))
+            return
+
+        if method == "job.get":
+            job_id = params.get("job_id")
+            if not isinstance(job_id, str) or not job_id:
+                raise ValueError("job_id must be a non-empty string")
+            self._emit(success_response(request.id, queue.get(job_id).as_dict()))
+            return
+
+        if method == "job.list":
+            status = params.get("status")
+            if status is not None and not isinstance(status, str):
+                raise ValueError("status must be a string")
+            limit = params.get("limit", 50)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            jobs = queue.list(status=status, limit=limit)
+            self._emit(
+                success_response(
+                    request.id, {"jobs": [item.as_dict() for item in jobs]}
+                )
+            )
+            return
+
+        if method == "job.claim":
+            worker_id = params.get("worker_id")
+            if not isinstance(worker_id, str) or not worker_id:
+                raise ValueError("worker_id must be a non-empty string")
+            lease_seconds = params.get("lease_seconds", 60)
+            if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int):
+                raise ValueError("lease_seconds must be an integer")
+            kinds = params.get("kinds")
+            if kinds is not None:
+                if not isinstance(kinds, list) or not all(
+                    isinstance(item, str) for item in kinds
+                ):
+                    raise ValueError("kinds must be a string array")
+            job = queue.claim(
+                worker_id, lease_seconds=lease_seconds, kinds=kinds
+            )
+            self._emit(
+                success_response(
+                    request.id, {"job": job.as_dict() if job else None}
+                )
+            )
+            return
+
+        if method == "job.complete":
+            job_id = params.get("job_id")
+            worker_id = params.get("worker_id")
+            if not isinstance(job_id, str) or not job_id:
+                raise ValueError("job_id must be a non-empty string")
+            if not isinstance(worker_id, str) or not worker_id:
+                raise ValueError("worker_id must be a non-empty string")
+            self._emit(
+                success_response(
+                    request.id, queue.complete(job_id, worker_id).as_dict()
+                )
+            )
+            return
+
+        if method == "job.fail":
+            job_id = params.get("job_id")
+            worker_id = params.get("worker_id")
+            error = params.get("error", "failed")
+            retry = params.get("retry", True)
+            if not isinstance(job_id, str) or not job_id:
+                raise ValueError("job_id must be a non-empty string")
+            if not isinstance(worker_id, str) or not worker_id:
+                raise ValueError("worker_id must be a non-empty string")
+            if not isinstance(error, str):
+                raise ValueError("error must be a string")
+            if not isinstance(retry, bool):
+                raise ValueError("retry must be a boolean")
+            self._emit(
+                success_response(
+                    request.id,
+                    queue.fail(job_id, worker_id, error, retry=retry).as_dict(),
+                )
+            )
+            return
+
+        if method == "job.cancel":
+            job_id = params.get("job_id")
+            if not isinstance(job_id, str) or not job_id:
+                raise ValueError("job_id must be a non-empty string")
+            self._emit(success_response(request.id, queue.cancel(job_id).as_dict()))
+            return
+
+        if method == "job.pause":
+            job_id = params.get("job_id")
+            if not isinstance(job_id, str) or not job_id:
+                raise ValueError("job_id must be a non-empty string")
+            self._emit(success_response(request.id, queue.pause(job_id).as_dict()))
+            return
+
+        if method == "job.resume":
+            job_id = params.get("job_id")
+            if not isinstance(job_id, str) or not job_id:
+                raise ValueError("job_id must be a non-empty string")
+            self._emit(success_response(request.id, queue.resume(job_id).as_dict()))
+            return
+
+        if method == "job.reclaim_expired":
+            count = queue.reclaim_expired()
+            self._emit(success_response(request.id, {"reclaimed": count}))
+            return
 
         self._emit(
             error_response(

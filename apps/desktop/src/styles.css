@@ -208,6 +208,62 @@ button { font: inherit; }
 .text-button { padding: 5px 0; color: var(--cyan); background: transparent; border: 0; border-bottom: 1px solid currentColor; cursor: pointer; font-size: 11px; }
 .text-button:disabled { opacity: 0.4; cursor: default; }
 
+.project-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.project-form label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.project-form input {
+  width: 100%;
+  padding: 12px 14px;
+  color: var(--paper);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  outline: none;
+}
+.project-form input:focus {
+  border-color: rgba(125, 228, 223, 0.55);
+}
+.action-grid.compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.project-meta {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.project-meta strong {
+  color: var(--paper);
+  font-weight: 600;
+}
+.recent-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+}
+.job-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--paper);
+  font-family: "SFMono-Regular", monospace;
+  font-size: 12px;
+}
+.job-list code {
+  color: var(--acid);
+}
+
 .event-strip { gap: 24px; padding: 18px 0 0; color: var(--muted); font-family: "SFMono-Regular", monospace; font-size: 9px; overflow: hidden; }
 .event-title { color: var(--cyan); white-space: nowrap; }
 .event-list { display: flex; gap: 8px; min-width: 0; overflow: hidden; }

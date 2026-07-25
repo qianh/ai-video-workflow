@@ -10,6 +10,18 @@ import "./styles.css";
 
 type Notice = { tone: "neutral" | "success" | "warning"; text: string };
 type Progress = { requestId: string; current: number; total: number };
+type ProjectInfo = {
+  id: string;
+  name: string;
+  root_path: string;
+  schema_version?: number;
+};
+type JobInfo = {
+  id: string;
+  kind: string;
+  status: string;
+  attempts: number;
+};
 
 interface AppProps {
   api?: SidecarApi;
@@ -41,6 +53,11 @@ export function App({
   const [busy, setBusy] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [recentEvents, setRecentEvents] = useState<SidecarEvent[]>([]);
+  const [projectName, setProjectName] = useState("试播项目");
+  const [parentDir, setParentDir] = useState("~/Documents/ai-video-projects");
+  const [project, setProject] = useState<ProjectInfo | null>(null);
+  const [recentProjects, setRecentProjects] = useState<ProjectInfo[]>([]);
+  const [jobs, setJobs] = useState<JobInfo[]>([]);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -54,8 +71,33 @@ export function App({
     }
   }, [api]);
 
+  const refreshProjectState = useCallback(async () => {
+    const current = await api.request("project.current", {}, requestId("project-current"));
+    const currentProject = (current.project as ProjectInfo | null | undefined) ?? null;
+    setProject(currentProject);
+    const recent = await api.request(
+      "project.list_recent",
+      { limit: 8 },
+      requestId("project-recent"),
+    );
+    const list = (recent.projects as ProjectInfo[] | undefined) ?? [];
+    setRecentProjects(list);
+    if (currentProject) {
+      const jobList = await api.request("job.list", { limit: 20 }, requestId("job-list"));
+      setJobs(((jobList.jobs as JobInfo[] | undefined) ?? []).map((job) => ({
+        id: job.id,
+        kind: job.kind,
+        status: job.status,
+        attempts: job.attempts,
+      })));
+    } else {
+      setJobs([]);
+    }
+  }, [api]);
+
   useEffect(() => {
     void refreshStatus().catch(() => undefined);
+    void refreshProjectState().catch(() => undefined);
     let disposed = false;
     let stop: (() => void) | undefined;
 
@@ -87,7 +129,7 @@ export function App({
       disposed = true;
       stop?.();
     };
-  }, [api, refreshStatus]);
+  }, [api, refreshProjectState, refreshStatus]);
 
   const healthLabel = status?.running ? "在线" : status ? "离线" : "未知";
   const healthTone = status?.running ? "online" : "offline";
@@ -189,6 +231,60 @@ export function App({
     }
   };
 
+  const createProject = async () => {
+    setBusy("project-create");
+    setNotice({ tone: "neutral", text: "正在创建项目…" });
+    try {
+      const created = (await api.request(
+        "project.create",
+        { parent_dir: parentDir, name: projectName },
+        requestId("project-create"),
+      )) as ProjectInfo;
+      setProject(created);
+      setNotice({ tone: "success", text: `已创建并打开：${created.name}` });
+      await refreshProjectState();
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const openProjectPath = async (rootPath: string) => {
+    setBusy("project-open");
+    try {
+      const opened = (await api.request(
+        "project.open",
+        { root_dir: rootPath },
+        requestId("project-open"),
+      )) as ProjectInfo;
+      setProject(opened);
+      setNotice({ tone: "success", text: `已打开：${opened.name}` });
+      await refreshProjectState();
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const enqueueDemoJob = async () => {
+    setBusy("job-enqueue");
+    try {
+      const job = (await api.request(
+        "job.enqueue",
+        { kind: "demo.ping", payload: { source: "ui" }, max_attempts: 3 },
+        requestId("job-enqueue"),
+      )) as JobInfo;
+      setNotice({ tone: "success", text: `已入队任务 ${job.id.slice(0, 8)}…` });
+      await refreshProjectState();
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <main className="shell">
       <div className="ambient-grid" aria-hidden="true" />
@@ -196,7 +292,7 @@ export function App({
         <div className="brand-lockup">
           <span className="brand-mark" aria-hidden="true">帧</span>
           <div>
-            <p className="eyebrow">AI VIDEO WORKFLOW / M0</p>
+            <p className="eyebrow">AI VIDEO WORKFLOW / M1</p>
             <h1>工作流核心台</h1>
           </div>
         </div>
@@ -243,6 +339,83 @@ export function App({
             <span>{notice.text}</span>
           </div>
         </aside>
+      </section>
+
+      <section className="console-panel" aria-label="项目工作区">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">PROJECT WORKSPACE</p>
+            <h3>项目与任务</h3>
+          </div>
+          <span className="panel-number">M1.05</span>
+        </div>
+        <div className="project-form">
+          <label>
+            项目名称
+            <input
+              aria-label="项目名称"
+              value={projectName}
+              onChange={(event) => setProjectName(event.target.value)}
+            />
+          </label>
+          <label>
+            父目录
+            <input
+              aria-label="项目父目录"
+              value={parentDir}
+              onChange={(event) => setParentDir(event.target.value)}
+            />
+          </label>
+        </div>
+        <div className="action-grid compact">
+          <button
+            aria-label="创建项目"
+            className="action primary"
+            onClick={createProject}
+            disabled={busy !== null}
+          >
+            <span className="action-no">P1</span>
+            <span><strong>创建项目</strong><small>project.create + 打开</small></span>
+          </button>
+          <button
+            aria-label="入队演示任务"
+            className="action"
+            onClick={enqueueDemoJob}
+            disabled={busy !== null || !project}
+          >
+            <span className="action-no">J1</span>
+            <span><strong>入队演示任务</strong><small>job.enqueue demo.ping</small></span>
+          </button>
+        </div>
+        <div className="project-meta">
+          <p>
+            当前项目：{" "}
+            <strong>{project ? `${project.name} · ${project.root_path}` : "未打开"}</strong>
+          </p>
+          {recentProjects.length > 0 && (
+            <div className="recent-list" aria-label="最近项目">
+              {recentProjects.map((item) => (
+                <button
+                  key={item.id}
+                  className="text-button"
+                  onClick={() => void openProjectPath(item.root_path)}
+                  disabled={busy !== null}
+                >
+                  打开 {item.name}
+                </button>
+              ))}
+            </div>
+          )}
+          {jobs.length > 0 && (
+            <ul className="job-list" aria-label="任务列表">
+              {jobs.map((job) => (
+                <li key={job.id}>
+                  <code>{job.status}</code> {job.kind} · 尝试 {job.attempts}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </section>
 
       <section className="console-panel">

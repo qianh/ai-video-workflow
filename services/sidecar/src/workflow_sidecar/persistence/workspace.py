@@ -67,6 +67,11 @@ class WorkspaceService:
     def current(self) -> ProjectRecord | None:
         return self._current
 
+    def require_project_db(self) -> Database:
+        if self._project is None or self._current is None:
+            raise ValueError("no project is open")
+        return self._project
+
     def close(self) -> None:
         self.close_project()
         self._global.close()

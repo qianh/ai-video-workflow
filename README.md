@@ -10,9 +10,11 @@
 - Sidecar 崩溃后的安全恢复：失败请求不重放，下一请求自动启动新进程。
 - Python 源码开发模式和 PyInstaller arm64 单文件构建。
 - M0 状态页，可执行 Ping、进度、取消和受控崩溃恢复验证。
-- **M1 起步**：`global.db` / `project.db` 迁移、项目创建/打开/关闭/最近列表（Python 唯一写入者，ADR-003）。
+- **M1 底座**：`global.db` / `project.db` 迁移、项目创建/打开/关闭/最近列表、持久任务队列（租约/重试/暂停/取消）。
+- 桌面 UI 含项目工作区面板（创建、最近打开、演示任务入队）。
 
-项目 RPC：`project.create`、`project.open`、`project.close`、`project.current`、`project.list_recent`。  
+项目 RPC：`project.create` / `open` / `close` / `current` / `list_recent`。  
+任务 RPC：`job.enqueue` / `get` / `list` / `claim` / `complete` / `fail` / `cancel` / `pause` / `resume` / `reclaim_expired`。  
 全局库默认路径：`~/.ai-video-workflow/global.db`（可用 `WORKFLOW_GLOBAL_DB` 覆盖）。
 
 ## 环境要求
