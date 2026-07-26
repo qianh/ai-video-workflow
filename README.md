@@ -19,6 +19,8 @@
 任务 RPC：`job.enqueue` / `get` / `list` / `claim` / `complete` / `fail` / `cancel` / `pause` / `resume` / `reclaim_expired`。  
 环境 RPC：`env.summary`、`env.resolve`（必须传 `allow_keys`）。  
 快照 RPC：`snapshot.create`、`snapshot.list`。  
+日志/诊断 RPC：`log.write`、`log.tail`、`diagnostics.create_pack`（脱敏 JSONL，打包不含 `.env.local`/媒体原件）。  
+路径 RPC：`fs.resolve`、`fs.hash`（仅项目相对路径，拒绝越界）。  
 全局库默认路径：`~/.ai-video-workflow/global.db`（可用 `WORKFLOW_GLOBAL_DB` 覆盖）。  
 全局 env 文件：与 `global.db` 同目录的 `env`。
 

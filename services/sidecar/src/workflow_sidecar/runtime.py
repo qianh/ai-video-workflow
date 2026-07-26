@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .diagnostics import JsonlLogger, create_diagnostic_pack
+from .diagnostics.pack import default_log_path
 from .persistence import (
     JobQueue,
     WorkspaceService,
@@ -17,6 +19,7 @@ from .persistence import (
     resolve_task_env,
     summarize_env,
 )
+from .persistence.paths import file_sha256, resolve_project_path, to_project_relative
 from .protocol import Request, error_response, event, success_response
 
 
@@ -44,7 +47,11 @@ class SidecarRuntime:
         self._emit = emit
         self._enable_test_methods = enable_test_methods
         self._active: dict[str, asyncio.Task[None]] = {}
-        self._workspace = WorkspaceService(global_db_path or default_global_db_path())
+        self._global_db_path = Path(global_db_path or default_global_db_path())
+        self._workspace = WorkspaceService(self._global_db_path)
+        self._app_logger = JsonlLogger(
+            default_log_path(project_root=None, global_db_path=self._global_db_path)
+        )
 
     async def shutdown(self) -> None:
         self._workspace.close()
@@ -162,6 +169,19 @@ class SidecarRuntime:
 
         if request.method.startswith("snapshot."):
             await self._execute_snapshot(request)
+            return
+
+        if request.method.startswith("log.") or request.method.startswith(
+            "diagnostics."
+        ):
+            if request.method in {"diagnostics.count", "diagnostics.crash"}:
+                pass
+            else:
+                await self._execute_diagnostics(request)
+                return
+
+        if request.method.startswith("fs."):
+            await self._execute_fs(request)
             return
 
         if self._enable_test_methods and request.method == "diagnostics.count":
@@ -320,6 +340,134 @@ class SidecarRuntime:
 
     def _global_env_path(self) -> Path:
         return default_global_env_path(self._workspace.global_db_path)
+
+    def _logger(self) -> JsonlLogger:
+        project_root = self._project_root()
+        if project_root is not None:
+            return JsonlLogger(
+                default_log_path(
+                    project_root=project_root, global_db_path=self._global_db_path
+                )
+            )
+        return self._app_logger
+
+    async def _execute_diagnostics(self, request: Request) -> None:
+        method = request.method
+        params = request.params
+
+        if method == "log.write":
+            level = params.get("level", "info")
+            message = params.get("message")
+            fields = params.get("fields") or {}
+            if not isinstance(level, str):
+                raise ValueError("level must be a string")
+            if not isinstance(message, str) or not message:
+                raise ValueError("message must be a non-empty string")
+            if not isinstance(fields, dict):
+                raise ValueError("fields must be an object")
+            record = self._logger().write(level, message, fields=fields)
+            self._emit(success_response(request.id, {"record": record}))
+            return
+
+        if method == "log.tail":
+            limit = params.get("limit", 50)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            records = self._logger().tail(limit)
+            self._emit(success_response(request.id, {"records": records}))
+            return
+
+        if method == "diagnostics.create_pack":
+            project_root = self._project_root()
+            current = self._workspace.current
+            jobs: list[dict[str, Any]] = []
+            if project_root is not None:
+                jobs = [item.as_dict() for item in self._jobs().list(limit=50)]
+            log_path = default_log_path(
+                project_root=project_root, global_db_path=self._global_db_path
+            )
+            output_dir = (
+                project_root / "temp" / "diagnostics"
+                if project_root is not None
+                else self._global_db_path.parent / "diagnostics"
+            )
+            pack = create_diagnostic_pack(
+                output_dir=output_dir,
+                global_db_path=self._global_db_path,
+                project_root=project_root,
+                project_schema_version=(
+                    current.schema_version if current is not None else None
+                ),
+                job_summary=jobs,
+                capability_status={
+                    "sidecar": "ready",
+                    "sqlite": "ready",
+                },
+                log_path=log_path if log_path.is_file() else None,
+            )
+            self._logger().write(
+                "info",
+                "diagnostic pack created",
+                fields={"path": pack.path, "includes": pack.includes},
+            )
+            self._emit(success_response(request.id, pack.as_dict()))
+            return
+
+        self._emit(
+            error_response(
+                request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
+            )
+        )
+
+    async def _execute_fs(self, request: Request) -> None:
+        method = request.method
+        params = request.params
+        current = self._workspace.current
+        if current is None:
+            raise ValueError("no project is open")
+        root = Path(current.root_path)
+
+        if method == "fs.resolve":
+            relative = params.get("relative")
+            if not isinstance(relative, str):
+                raise ValueError("relative must be a string")
+            resolved = resolve_project_path(root, relative)
+            self._emit(
+                success_response(
+                    request.id,
+                    {
+                        "relative": to_project_relative(root, resolved),
+                        "exists": resolved.exists(),
+                        "is_file": resolved.is_file(),
+                        "is_dir": resolved.is_dir(),
+                    },
+                )
+            )
+            return
+
+        if method == "fs.hash":
+            relative = params.get("relative")
+            if not isinstance(relative, str):
+                raise ValueError("relative must be a string")
+            resolved = resolve_project_path(root, relative)
+            digest = file_sha256(resolved)
+            self._emit(
+                success_response(
+                    request.id,
+                    {
+                        "relative": to_project_relative(root, resolved),
+                        "sha256": digest,
+                        "size_bytes": resolved.stat().st_size,
+                    },
+                )
+            )
+            return
+
+        self._emit(
+            error_response(
+                request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
+            )
+        )
 
     async def _execute_env(self, request: Request) -> None:
         method = request.method
