@@ -19,6 +19,7 @@ from .persistence import (
     resolve_task_env,
     summarize_env,
 )
+from .persistence.overview import build_project_overview
 from .persistence.paths import file_sha256, resolve_project_path, to_project_relative
 from .protocol import Request, error_response, event, success_response
 
@@ -157,6 +158,17 @@ class SidecarRuntime:
                     {"projects": [item.as_dict() for item in projects]},
                 )
             )
+            return
+
+        if request.method == "project.overview":
+            current = self._workspace.current
+            if current is None:
+                raise ValueError("no project is open")
+            overview = build_project_overview(
+                project=current,
+                jobs=self._jobs(),
+            )
+            self._emit(success_response(request.id, overview))
             return
 
         if request.method.startswith("job."):

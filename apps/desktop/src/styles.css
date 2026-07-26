@@ -264,6 +264,98 @@ button { font: inherit; }
   color: var(--acid);
 }
 
+.shell-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 18px 0 14px;
+}
+.nav-item {
+  padding: 10px 14px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  font-size: 12px;
+}
+.nav-item.active,
+.nav-item:hover {
+  color: var(--ink);
+  background: var(--acid);
+  border-color: var(--acid);
+}
+.notice.bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+}
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.stat-card {
+  display: grid;
+  gap: 6px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+}
+.stat-card span {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.stat-card strong {
+  font-size: 28px;
+  line-height: 1;
+}
+.stat-card small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.overview-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+.overview-columns h4 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--cyan);
+}
+.empty-hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+.status-card.inline {
+  margin-bottom: 18px;
+  max-width: none;
+}
+
+@media (max-width: 940px) {
+  .overview-grid,
+  .overview-columns {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .overview-grid,
+  .overview-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
 .event-strip { gap: 24px; padding: 18px 0 0; color: var(--muted); font-family: "SFMono-Regular", monospace; font-size: 9px; overflow: hidden; }
 .event-title { color: var(--cyan); white-space: nowrap; }
 .event-list { display: flex; gap: 8px; min-width: 0; overflow: hidden; }
