@@ -363,6 +363,100 @@ describe("M1 shell", () => {
     expect(await screen.findByText("bridge unavailable")).toBeInTheDocument();
   });
 
+  it("imports story text, splits chapters, and lists events", async () => {
+    const api = createApi({
+      request: vi.fn().mockImplementation(async (method: string) => {
+        if (method === "project.current") {
+          return {
+            project: { id: "p1", name: "试播项目", root_path: "/tmp/demo", schema_version: 2 },
+          };
+        }
+        if (method === "project.list_recent") return { projects: [] };
+        if (method === "job.list") return { jobs: [] };
+        if (method === "project.overview") return emptyOverview;
+        if (method === "story.import_source") {
+          return {
+            id: "s1",
+            title: "试播小说",
+            source_type: "novel",
+            status: "imported",
+            char_count: 40,
+          };
+        }
+        if (method === "story.split_chapters") {
+          return {
+            chunks: [
+              {
+                id: "c1",
+                title: "第一章 夜市",
+                ordinal: 0,
+                char_start: 0,
+                char_end: 20,
+              },
+            ],
+          };
+        }
+        if (method === "story.create_event") {
+          return {
+            event_id: "e1",
+            title: "首章关键事件",
+            summary: "从首个章节抽取的定位事件",
+            origin: "extracted",
+            order_key: 1,
+          };
+        }
+        if (method === "story.list_sources") {
+          return {
+            sources: [
+              {
+                id: "s1",
+                title: "试播小说",
+                source_type: "novel",
+                status: "split",
+                char_count: 40,
+              },
+            ],
+          };
+        }
+        if (method === "story.list_chunks") {
+          return {
+            chunks: [
+              {
+                id: "c1",
+                title: "第一章 夜市",
+                ordinal: 0,
+                char_start: 0,
+                char_end: 20,
+              },
+            ],
+          };
+        }
+        if (method === "story.list_events") {
+          return {
+            events: [
+              {
+                event_id: "e1",
+                title: "首章关键事件",
+                summary: "从首个章节抽取的定位事件",
+                origin: "extracted",
+                order_key: 1,
+              },
+            ],
+          };
+        }
+        return { status: "ok" };
+      }),
+    });
+    const user = userEvent.setup();
+    render(<App api={api} showDiagnostics />);
+    await user.click(await screen.findByRole("button", { name: "故事" }));
+    await user.click(await screen.findByRole("button", { name: "导入并切分" }));
+    expect(await screen.findByText(/已导入「试播小说」/)).toBeInTheDocument();
+    expect(screen.getByLabelText("故事来源列表")).toHaveTextContent("试播小说");
+    expect(screen.getByLabelText("章节列表")).toHaveTextContent("第一章 夜市");
+    expect(screen.getByLabelText("事件列表")).toHaveTextContent("首章关键事件");
+  });
+
   it("shows empty states across shell views", async () => {
     const api = createApi();
     const user = userEvent.setup();

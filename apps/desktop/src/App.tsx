@@ -36,7 +36,28 @@ type ProjectOverview = {
   snapshots: SnapshotInfo[];
   queue_depth: number;
 };
-type ShellView = "overview" | "project" | "jobs" | "link";
+type ShellView = "overview" | "project" | "story" | "jobs" | "link";
+type StorySourceInfo = {
+  id: string;
+  title: string;
+  source_type: string;
+  status: string;
+  char_count: number;
+};
+type StoryChunkInfo = {
+  id: string;
+  title: string | null;
+  ordinal: number;
+  char_start: number;
+  char_end: number;
+};
+type StoryEventInfo = {
+  event_id: string;
+  title: string;
+  summary: string;
+  origin: string;
+  order_key: number;
+};
 
 interface AppProps {
   api?: SidecarApi;
@@ -87,6 +108,13 @@ export function App({
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [overview, setOverview] = useState<ProjectOverview | null>(null);
   const [view, setView] = useState<ShellView>("overview");
+  const [storyText, setStoryText] = useState(
+    "# 第一章 夜市\n\n女孩在雨中捡到发光的 U 盘。\n\n# 第二章 追索\n\n她发现 U 盘里藏着一段失踪消息。\n",
+  );
+  const [storyTitle, setStoryTitle] = useState("试播小说");
+  const [sources, setSources] = useState<StorySourceInfo[]>([]);
+  const [chunks, setChunks] = useState<StoryChunkInfo[]>([]);
+  const [storyEvents, setStoryEvents] = useState<StoryEventInfo[]>([]);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -143,8 +171,35 @@ export function App({
     } else {
       setJobs([]);
       setOverview(null);
+      setSources([]);
+      setChunks([]);
+      setStoryEvents([]);
     }
   }, [api]);
+
+  const refreshStoryState = useCallback(async () => {
+    if (!project) {
+      setSources([]);
+      setChunks([]);
+      setStoryEvents([]);
+      return;
+    }
+    const listed = await api.request("story.list_sources", {}, requestId("story-sources"));
+    const nextSources = (listed.sources as StorySourceInfo[] | undefined) ?? [];
+    setSources(nextSources);
+    if (nextSources[0]) {
+      const chunkList = await api.request(
+        "story.list_chunks",
+        { source_id: nextSources[0].id },
+        requestId("story-chunks"),
+      );
+      setChunks((chunkList.chunks as StoryChunkInfo[] | undefined) ?? []);
+    } else {
+      setChunks([]);
+    }
+    const events = await api.request("story.list_events", {}, requestId("story-events"));
+    setStoryEvents((events.events as StoryEventInfo[] | undefined) ?? []);
+  }, [api, project]);
 
   useEffect(() => {
     void refreshStatus().catch(() => undefined);
@@ -357,6 +412,57 @@ export function App({
     }
   };
 
+  const importAndSplitStory = async () => {
+    setBusy("story-import");
+    try {
+      const source = (await api.request(
+        "story.import_source",
+        {
+          source_type: "novel",
+          title: storyTitle,
+          text: storyText,
+        },
+        requestId("story-import"),
+      )) as StorySourceInfo;
+      const split = await api.request(
+        "story.split_chapters",
+        { source_id: source.id },
+        requestId("story-split"),
+      );
+      const firstChunk = ((split.chunks as StoryChunkInfo[] | undefined) ?? [])[0];
+      if (firstChunk) {
+        const quoteStart = Math.min(
+          firstChunk.char_start + 1,
+          Math.max(firstChunk.char_end - 1, firstChunk.char_start),
+        );
+        const quoteEnd = Math.min(firstChunk.char_end, quoteStart + 12);
+        await api.request(
+          "story.create_event",
+          {
+            title: "首章关键事件",
+            summary: "从首个章节抽取的定位事件",
+            order_key: 1,
+            origin: "extracted",
+            story_source_id: source.id,
+            char_start: quoteStart,
+            char_end: quoteEnd,
+          },
+          requestId("story-event"),
+        );
+      }
+      setNotice({
+        tone: "success",
+        text: `已导入「${source.title}」并完成章节切分`,
+      });
+      await refreshStoryState();
+      setView("story");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const createDiagnosticPack = async () => {
     setBusy("diag-pack");
     try {
@@ -379,6 +485,7 @@ export function App({
   const navItems: { id: ShellView; label: string }[] = [
     { id: "overview", label: "项目总览" },
     { id: "project", label: "项目" },
+    { id: "story", label: "故事" },
     { id: "jobs", label: "任务中心" },
     { id: "link", label: "链路诊断" },
   ];
@@ -580,6 +687,115 @@ export function App({
               </div>
             )}
           </div>
+        </section>
+      )}
+
+      {view === "story" && (
+        <section className="console-panel" aria-label="故事工作区">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">STORY GRAPH</p>
+              <h3>故事来源与事件</h3>
+            </div>
+            <span className="panel-number">M2.01</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="project-form">
+                <label>
+                  来源标题
+                  <input
+                    aria-label="故事来源标题"
+                    value={storyTitle}
+                    onChange={(event) => setStoryTitle(event.target.value)}
+                  />
+                </label>
+              </div>
+              <label className="story-text-label">
+                原文
+                <textarea
+                  aria-label="故事原文"
+                  className="story-text"
+                  value={storyText}
+                  onChange={(event) => setStoryText(event.target.value)}
+                  rows={8}
+                />
+              </label>
+              <div className="action-grid compact">
+                <button
+                  aria-label="导入并切分"
+                  className="action primary"
+                  onClick={() => void importAndSplitStory()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">S1</span>
+                  <span>
+                    <strong>导入并切分</strong>
+                    <small>import + split + 样例事件</small>
+                  </span>
+                </button>
+                <button
+                  aria-label="刷新故事"
+                  className="action"
+                  onClick={() => void refreshStoryState()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">S2</span>
+                  <span>
+                    <strong>刷新列表</strong>
+                    <small>sources / chunks / events</small>
+                  </span>
+                </button>
+              </div>
+              <div className="overview-columns">
+                <div>
+                  <h4>来源</h4>
+                  {sources.length === 0 ? (
+                    <p className="empty-hint">暂无来源</p>
+                  ) : (
+                    <ul className="job-list" aria-label="故事来源列表">
+                      {sources.map((source) => (
+                        <li key={source.id}>
+                          <code>{source.status}</code> {source.title} · {source.char_count} 字
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div>
+                  <h4>章节</h4>
+                  {chunks.length === 0 ? (
+                    <p className="empty-hint">尚未切分</p>
+                  ) : (
+                    <ul className="job-list" aria-label="章节列表">
+                      {chunks.map((chunk) => (
+                        <li key={chunk.id}>
+                          #{chunk.ordinal + 1} {chunk.title ?? "未命名"} · [{chunk.char_start},{" "}
+                          {chunk.char_end})
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div>
+                  <h4>事件</h4>
+                  {storyEvents.length === 0 ? (
+                    <p className="empty-hint">暂无事件</p>
+                  ) : (
+                    <ul className="job-list" aria-label="事件列表">
+                      {storyEvents.map((event) => (
+                        <li key={event.event_id}>
+                          <code>{event.origin}</code> {event.title} · {event.summary}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </section>
       )}
 

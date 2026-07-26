@@ -21,6 +21,7 @@ from .persistence import (
 )
 from .persistence.overview import build_project_overview
 from .persistence.paths import file_sha256, resolve_project_path, to_project_relative
+from .persistence.story import StoryService
 from .protocol import Request, error_response, event, success_response
 
 
@@ -171,6 +172,10 @@ class SidecarRuntime:
             self._emit(success_response(request.id, overview))
             return
 
+        if request.method.startswith("story."):
+            await self._execute_story(request)
+            return
+
         if request.method.startswith("job."):
             await self._execute_job(request)
             return
@@ -212,6 +217,149 @@ class SidecarRuntime:
 
     def _jobs(self) -> JobQueue:
         return JobQueue(self._workspace.require_project_db())
+
+    def _story(self) -> StoryService:
+        current = self._workspace.current
+        if current is None:
+            raise ValueError("no project is open")
+        return StoryService(
+            self._workspace.require_project_db(),
+            Path(current.root_path),
+        )
+
+    async def _execute_story(self, request: Request) -> None:
+        story = self._story()
+        method = request.method
+        params = request.params
+
+        if method == "story.import_source":
+            source_type = params.get("source_type", "novel")
+            title = params.get("title")
+            text = params.get("text")
+            if not isinstance(source_type, str):
+                raise ValueError("source_type must be a string")
+            if not isinstance(title, str):
+                raise ValueError("title must be a string")
+            if not isinstance(text, str):
+                raise ValueError("text must be a string")
+            record = story.import_source(
+                source_type=source_type, title=title, text=text
+            )
+            self._emit(success_response(request.id, record.as_dict()))
+            return
+
+        if method == "story.list_sources":
+            sources = story.list_sources()
+            self._emit(
+                success_response(
+                    request.id, {"sources": [item.as_dict() for item in sources]}
+                )
+            )
+            return
+
+        if method == "story.split_chapters":
+            source_id = params.get("source_id")
+            if not isinstance(source_id, str) or not source_id:
+                raise ValueError("source_id must be a non-empty string")
+            chunks = story.split_chapters(source_id)
+            self._emit(
+                success_response(
+                    request.id, {"chunks": [item.as_dict() for item in chunks]}
+                )
+            )
+            return
+
+        if method == "story.list_chunks":
+            source_id = params.get("source_id")
+            if not isinstance(source_id, str) or not source_id:
+                raise ValueError("source_id must be a non-empty string")
+            chunks = story.list_chunks(source_id)
+            self._emit(
+                success_response(
+                    request.id, {"chunks": [item.as_dict() for item in chunks]}
+                )
+            )
+            return
+
+        if method == "story.create_event":
+            title = params.get("title")
+            summary = params.get("summary")
+            order_key = params.get("order_key", 0)
+            origin = params.get("origin", "extracted")
+            story_source_id = params.get("story_source_id")
+            char_start = params.get("char_start")
+            char_end = params.get("char_end")
+            confidence = params.get("confidence", 1.0)
+            if not isinstance(title, str) or not isinstance(summary, str):
+                raise ValueError("title and summary must be strings")
+            if not isinstance(order_key, (int, float)) or isinstance(order_key, bool):
+                raise ValueError("order_key must be a number")
+            if not isinstance(origin, str):
+                raise ValueError("origin must be a string")
+            if story_source_id is not None and not isinstance(story_source_id, str):
+                raise ValueError("story_source_id must be a string")
+            if char_start is not None and (
+                isinstance(char_start, bool) or not isinstance(char_start, int)
+            ):
+                raise ValueError("char_start must be an integer")
+            if char_end is not None and (
+                isinstance(char_end, bool) or not isinstance(char_end, int)
+            ):
+                raise ValueError("char_end must be an integer")
+            if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+                raise ValueError("confidence must be a number")
+            event_view = story.create_event(
+                title=title,
+                summary=summary,
+                order_key=float(order_key),
+                origin=origin,
+                story_source_id=story_source_id,
+                char_start=char_start,
+                char_end=char_end,
+                confidence=float(confidence),
+            )
+            self._emit(success_response(request.id, event_view.as_dict()))
+            return
+
+        if method == "story.list_events":
+            events = story.list_events()
+            self._emit(
+                success_response(
+                    request.id, {"events": [item.as_dict() for item in events]}
+                )
+            )
+            return
+
+        if method == "story.create_edge":
+            from_event_id = params.get("from_event_id")
+            to_event_id = params.get("to_event_id")
+            relation = params.get("relation")
+            confidence = params.get("confidence", 1.0)
+            if not isinstance(from_event_id, str) or not isinstance(to_event_id, str):
+                raise ValueError("from_event_id and to_event_id must be strings")
+            if not isinstance(relation, str):
+                raise ValueError("relation must be a string")
+            if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+                raise ValueError("confidence must be a number")
+            edge = story.create_edge(
+                from_event_id=from_event_id,
+                to_event_id=to_event_id,
+                relation=relation,
+                confidence=float(confidence),
+            )
+            self._emit(success_response(request.id, edge))
+            return
+
+        if method == "story.list_edges":
+            edges = story.list_edges()
+            self._emit(success_response(request.id, {"edges": edges}))
+            return
+
+        self._emit(
+            error_response(
+                request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
+            )
+        )
 
     async def _execute_job(self, request: Request) -> None:
         queue = self._jobs()
