@@ -48,6 +48,7 @@ type ShellView =
   | "continuity"
   | "director"
   | "gates"
+  | "production"
   | "drafts"
   | "generation"
   | "jobs"
@@ -208,6 +209,16 @@ export function App({
     looksStatus: string;
     storyValid: boolean;
     looksValid: boolean;
+    boardStatus?: string;
+    roughStatus?: string;
+    readyExport?: boolean;
+  } | null>(null);
+  const [pipelineSummary, setPipelineSummary] = useState<{
+    shotCount: number;
+    productionItems: number;
+    durationMs: number;
+    exports: string[];
+    readyExport: boolean;
   } | null>(null);
 
   const refreshStatus = useCallback(async () => {
@@ -284,6 +295,7 @@ export function App({
       setContinuitySummary(null);
       setDirectorSummary(null);
       setGateSummary(null);
+      setPipelineSummary(null);
     }
   }, [api]);
 
@@ -758,6 +770,53 @@ export function App({
         text: `试验项目已确认 · ready=${String(status.ready_for_batch_production)} · story=${String(story?.status)} · looks=${String(looks?.status)}`,
       });
       setView("gates");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runFullPipeline = async () => {
+    setBusy("pipeline");
+    try {
+      const pipe = await api.request(
+        "trial.bootstrap_pipeline",
+        {},
+        requestId("trial-pipeline"),
+      );
+      const exports =
+        ((pipe.exports as Array<{ profile?: string }> | undefined) ?? []).map((item) =>
+          String(item.profile ?? ""),
+        );
+      setPipelineSummary({
+        shotCount: Number(pipe.shot_count ?? 0),
+        productionItems: Number(pipe.production_items ?? 0),
+        durationMs: Number(pipe.timeline_duration_ms ?? 0),
+        exports,
+        readyExport: Boolean(pipe.ready_for_export),
+      });
+      const status = await api.request(
+        "gate.status",
+        { episode_id: pipe.episode_id },
+        requestId("gate-status-pipe"),
+      );
+      const gates = (status.gates as Record<string, Record<string, unknown>> | undefined) ?? {};
+      setGateSummary({
+        ready: Boolean(status.ready_for_batch_production),
+        storyStatus: String(gates.story_package?.status ?? ""),
+        looksStatus: String(gates.identity_and_locations?.status ?? ""),
+        storyValid: Boolean(gates.story_package?.valid),
+        looksValid: Boolean(gates.identity_and_locations?.valid),
+        boardStatus: String(gates.episode_storyboard_and_dialogue?.status ?? ""),
+        roughStatus: String(gates.episode_rough_cut?.status ?? ""),
+        readyExport: Boolean(status.ready_for_export),
+      });
+      setNotice({
+        tone: "success",
+        text: `M2–M4 流水线完成 · shots=${String(pipe.shot_count)} · items=${String(pipe.production_items)} · export=${String(pipe.ready_for_export)} · profiles=${exports.join(",")}`,
+      });
+      setView("production");
     } catch (error) {
       setNotice({ tone: "warning", text: errorMessage(error) });
     } finally {
@@ -1785,6 +1844,7 @@ export function App({
     { id: "continuity", label: "状态账本" },
     { id: "director", label: "导演栈" },
     { id: "gates", label: "确认门" },
+    { id: "production", label: "生产交付" },
     { id: "drafts", label: "草稿修订" },
     { id: "generation", label: "生成流水线" },
     { id: "jobs", label: "任务中心" },
@@ -2202,14 +2262,79 @@ export function App({
         </section>
       )}
 
+      {view === "production" && (
+        <section className="console-panel" aria-label="生产交付">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">M3 STORYBOARD · M4 POST</p>
+              <h3>分镜生产与后期交付</h3>
+            </div>
+            <span className="panel-number">M3–M4</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="跑通 M2 到 M4 流水线"
+                  className="action primary"
+                  onClick={() => void runFullPipeline()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">P1</span>
+                  <span>
+                    <strong>跑通 M2→M4 流水线</strong>
+                    <small>storyboard · batch · timeline · export</small>
+                  </span>
+                </button>
+              </div>
+              {!pipelineSummary ? (
+                <p className="empty-hint">尚未运行生产流水线。</p>
+              ) : (
+                <div className="overview-columns">
+                  <div>
+                    <h4>分镜/生产</h4>
+                    <ul className="job-list" aria-label="生产统计">
+                      <li>镜头 {pipelineSummary.shotCount}</li>
+                      <li>生产项 {pipelineSummary.productionItems}</li>
+                      <li>时长 {pipelineSummary.durationMs} ms</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h4>导出</h4>
+                    <ul className="job-list" aria-label="导出配置">
+                      {pipelineSummary.exports.map((profile) => (
+                        <li key={profile}>
+                          <code>{profile}</code>
+                        </li>
+                      ))}
+                      <li>
+                        <code>
+                          {pipelineSummary.readyExport ? "ready" : "blocked"}
+                        </code>{" "}
+                        ready_for_export
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+              <p className="empty-hint">
+                外部 CLI 缺失时自动 mock/降级；FFmpeg 可用则生成真实黑场代理片。
+              </p>
+            </>
+          )}
+        </section>
+      )}
+
       {view === "gates" && (
         <section className="console-panel" aria-label="确认门">
           <div className="panel-heading">
             <div>
-              <p className="eyebrow">APPROVAL GATES · M2</p>
-              <h3>故事包与定妆确认门</h3>
+              <p className="eyebrow">APPROVAL GATES · M2–M4</p>
+              <h3>故事包 / 定妆 / 分镜 / 粗剪确认门</h3>
             </div>
-            <span className="panel-number">M2.14–15</span>
+            <span className="panel-number">M2.14–M4.11</span>
           </div>
           {!project ? (
             <p className="empty-hint">请先打开项目。</p>
@@ -2256,6 +2381,16 @@ export function App({
                         <code>{gateSummary.looksStatus}</code> identity_and_locations ·
                         valid={String(gateSummary.looksValid)}
                       </li>
+                      {gateSummary.boardStatus ? (
+                        <li>
+                          <code>{gateSummary.boardStatus}</code> storyboard
+                        </li>
+                      ) : null}
+                      {gateSummary.roughStatus ? (
+                        <li>
+                          <code>{gateSummary.roughStatus}</code> rough_cut
+                        </li>
+                      ) : null}
                     </ul>
                   </div>
                   <div>
@@ -2265,12 +2400,20 @@ export function App({
                         <code>{gateSummary.ready ? "ready" : "blocked"}</code>{" "}
                         ready_for_batch_production
                       </li>
+                      {gateSummary.readyExport !== undefined ? (
+                        <li>
+                          <code>
+                            {gateSummary.readyExport ? "ready" : "blocked"}
+                          </code>{" "}
+                          ready_for_export
+                        </li>
+                      ) : null}
                     </ul>
                   </div>
                 </div>
               )}
               <p className="empty-hint">
-                确认后目标修订集合哈希变化会使门失效。分镜/粗剪确认门属 M3/M4。
+                确认后目标修订集合哈希变化会使门失效。可用「生产交付」跑通完整导出。
               </p>
             </>
           )}

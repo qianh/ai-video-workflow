@@ -986,6 +986,392 @@ PROJECT_MIGRATIONS: list[Migration] = [
             ON approval_gates(status, updated_at DESC);
         """,
     ),
+    (
+        15,
+        """
+        CREATE TABLE awap_capabilities (
+            id TEXT PRIMARY KEY,
+            capability TEXT NOT NULL UNIQUE,
+            version TEXT NOT NULL,
+            cost_class TEXT NOT NULL,
+            status TEXT NOT NULL,
+            adapter_id TEXT,
+            probe_detail_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE awap_adapters (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            kind TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            status TEXT NOT NULL,
+            capabilities_json TEXT NOT NULL DEFAULT '[]',
+            config_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE budget_events (
+            id TEXT PRIMARY KEY,
+            capability TEXT NOT NULL,
+            cost_class TEXT NOT NULL,
+            allowed INTEGER NOT NULL,
+            reason TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE assets (
+            id TEXT PRIMARY KEY,
+            project_scoped INTEGER NOT NULL DEFAULT 1,
+            asset_type TEXT NOT NULL,
+            role TEXT NOT NULL,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL,
+            selected_file_id TEXT,
+            license_status TEXT NOT NULL DEFAULT 'pending',
+            locked INTEGER NOT NULL DEFAULT 0,
+            content_fingerprint TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE asset_files (
+            id TEXT PRIMARY KEY,
+            asset_id TEXT NOT NULL,
+            relative_path TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            byte_size INTEGER NOT NULL,
+            mime_type TEXT,
+            width INTEGER,
+            height INTEGER,
+            duration_ms INTEGER,
+            is_proxy INTEGER NOT NULL DEFAULT 0,
+            availability TEXT NOT NULL DEFAULT 'online',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(asset_id) REFERENCES assets(id)
+        );
+
+        CREATE TABLE asset_links (
+            id TEXT PRIMARY KEY,
+            owner_type TEXT NOT NULL,
+            owner_id TEXT NOT NULL,
+            asset_id TEXT NOT NULL,
+            usage_role TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(asset_id) REFERENCES assets(id)
+        );
+
+        CREATE TABLE source_records (
+            id TEXT PRIMARY KEY,
+            asset_id TEXT,
+            url TEXT,
+            platform TEXT,
+            title TEXT,
+            author TEXT,
+            tool TEXT,
+            fetched_at TEXT NOT NULL,
+            meta_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(asset_id) REFERENCES assets(id)
+        );
+
+        CREATE TABLE license_records (
+            id TEXT PRIMARY KEY,
+            asset_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            license_type TEXT,
+            usage_scope TEXT,
+            confirmation_note TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(asset_id) REFERENCES assets(id)
+        );
+
+        CREATE TABLE storyboards (
+            id TEXT PRIMARY KEY,
+            episode_id TEXT NOT NULL,
+            branch_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            current_revision_id TEXT,
+            confirmed_revision_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE storyboard_revisions (
+            id TEXT PRIMARY KEY,
+            storyboard_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            script_revision_id TEXT,
+            director_preset_revision_id TEXT,
+            visual_bible_revision_id TEXT,
+            estimated_duration_ms INTEGER,
+            content_hash TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            confirmed_at TEXT,
+            FOREIGN KEY(storyboard_id) REFERENCES storyboards(id),
+            UNIQUE(storyboard_id, revision_no)
+        );
+
+        CREATE TABLE shots (
+            id TEXT PRIMARY KEY,
+            storyboard_revision_id TEXT NOT NULL,
+            shot_no INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            current_revision_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(storyboard_revision_id) REFERENCES storyboard_revisions(id),
+            UNIQUE(storyboard_revision_id, shot_no)
+        );
+
+        CREATE TABLE shot_revisions (
+            id TEXT PRIMARY KEY,
+            shot_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            scene_revision_id TEXT,
+            shot_type TEXT NOT NULL,
+            framing TEXT NOT NULL,
+            camera_angle TEXT NOT NULL DEFAULT 'eye_level',
+            camera_motion_json TEXT NOT NULL DEFAULT '{}',
+            duration_ms INTEGER NOT NULL,
+            character_revision_ids_json TEXT NOT NULL DEFAULT '[]',
+            location_revision_id TEXT,
+            continuity_snapshot_id TEXT,
+            dialogue_line_revision_ids_json TEXT NOT NULL DEFAULT '[]',
+            generation_mode TEXT NOT NULL DEFAULT 'static_motion',
+            lip_sync_level TEXT NOT NULL DEFAULT 'none',
+            purpose TEXT,
+            action_text TEXT,
+            content_hash TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(shot_id) REFERENCES shots(id),
+            UNIQUE(shot_id, revision_no)
+        );
+
+        CREATE TABLE production_items (
+            id TEXT PRIMARY KEY,
+            shot_revision_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            input_fingerprint TEXT NOT NULL,
+            adapter_id TEXT,
+            capability TEXT,
+            params_json TEXT NOT NULL DEFAULT '{}',
+            output_asset_id TEXT,
+            stale INTEGER NOT NULL DEFAULT 0,
+            locked INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(shot_revision_id) REFERENCES shot_revisions(id)
+        );
+
+        CREATE TABLE generation_manifests (
+            id TEXT PRIMARY KEY,
+            production_item_id TEXT NOT NULL,
+            tool TEXT NOT NULL,
+            params_json TEXT NOT NULL,
+            inputs_json TEXT NOT NULL,
+            outputs_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(production_item_id) REFERENCES production_items(id)
+        );
+
+        CREATE TABLE dependency_edges (
+            id TEXT PRIMARY KEY,
+            upstream_type TEXT NOT NULL,
+            upstream_id TEXT NOT NULL,
+            downstream_type TEXT NOT NULL,
+            downstream_id TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE qc_findings (
+            id TEXT PRIMARY KEY,
+            subject_type TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            rule_id TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            message TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE review_queue_items (
+            id TEXT PRIMARY KEY,
+            subject_type TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            status TEXT NOT NULL,
+            decision_note TEXT,
+            created_at TEXT NOT NULL,
+            resolved_at TEXT
+        );
+        """,
+    ),
+    (
+        16,
+        """
+        CREATE TABLE voice_authorizations (
+            id TEXT PRIMARY KEY,
+            character_id TEXT,
+            voice_profile_id TEXT,
+            status TEXT NOT NULL,
+            evidence_note TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE tts_utterances (
+            id TEXT PRIMARY KEY,
+            dialogue_line_revision_id TEXT,
+            character_id TEXT,
+            voice_profile_id TEXT,
+            text TEXT NOT NULL,
+            status TEXT NOT NULL,
+            asset_id TEXT,
+            duration_ms INTEGER,
+            authorization_id TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE lip_sync_jobs (
+            id TEXT PRIMARY KEY,
+            shot_revision_id TEXT,
+            tts_utterance_id TEXT,
+            level TEXT NOT NULL,
+            status TEXT NOT NULL,
+            output_asset_id TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE caption_tracks (
+            id TEXT PRIMARY KEY,
+            episode_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            style_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE caption_segments (
+            id TEXT PRIMARY KEY,
+            track_id TEXT NOT NULL,
+            dialogue_line_revision_id TEXT,
+            tts_utterance_id TEXT,
+            start_ms INTEGER NOT NULL,
+            end_ms INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            sort_order INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(track_id) REFERENCES caption_tracks(id)
+        );
+
+        CREATE TABLE music_library_items (
+            id TEXT PRIMARY KEY,
+            asset_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            confirmation_status TEXT NOT NULL,
+            source_record_id TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(asset_id) REFERENCES assets(id)
+        );
+
+        CREATE TABLE timelines (
+            id TEXT PRIMARY KEY,
+            episode_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            current_revision_id TEXT,
+            confirmed_revision_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE timeline_revisions (
+            id TEXT PRIMARY KEY,
+            timeline_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            canvas_json TEXT NOT NULL DEFAULT '{}',
+            fps INTEGER NOT NULL DEFAULT 30,
+            duration_ms INTEGER NOT NULL DEFAULT 0,
+            content_hash TEXT,
+            created_at TEXT NOT NULL,
+            confirmed_at TEXT,
+            FOREIGN KEY(timeline_id) REFERENCES timelines(id),
+            UNIQUE(timeline_id, revision_no)
+        );
+
+        CREATE TABLE timeline_tracks (
+            id TEXT PRIMARY KEY,
+            timeline_revision_id TEXT NOT NULL,
+            track_type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            sort_order INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(timeline_revision_id) REFERENCES timeline_revisions(id)
+        );
+
+        CREATE TABLE timeline_clips (
+            id TEXT PRIMARY KEY,
+            track_id TEXT NOT NULL,
+            asset_file_id TEXT,
+            shot_revision_id TEXT,
+            start_ms INTEGER NOT NULL,
+            end_ms INTEGER NOT NULL,
+            source_in_ms INTEGER NOT NULL DEFAULT 0,
+            source_out_ms INTEGER,
+            params_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(track_id) REFERENCES timeline_tracks(id)
+        );
+
+        CREATE TABLE mix_plans (
+            id TEXT PRIMARY KEY,
+            timeline_revision_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            plan_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(timeline_revision_id) REFERENCES timeline_revisions(id)
+        );
+
+        CREATE TABLE render_jobs (
+            id TEXT PRIMARY KEY,
+            timeline_revision_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            output_relative_path TEXT,
+            params_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            finished_at TEXT,
+            FOREIGN KEY(timeline_revision_id) REFERENCES timeline_revisions(id)
+        );
+
+        CREATE TABLE cover_revisions (
+            id TEXT PRIMARY KEY,
+            episode_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            template TEXT NOT NULL,
+            asset_id TEXT,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE export_jobs (
+            id TEXT PRIMARY KEY,
+            episode_id TEXT NOT NULL,
+            profile TEXT NOT NULL,
+            status TEXT NOT NULL,
+            output_relative_path TEXT,
+            checklist_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            finished_at TEXT
+        );
+        """,
+    ),
 ]
 
 

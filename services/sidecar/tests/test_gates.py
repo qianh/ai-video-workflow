@@ -22,7 +22,7 @@ def test_trial_bootstrap_confirms_m2_gates(tmp_path: Path) -> None:
     parent = tmp_path / "projects"
     parent.mkdir()
     project = service.create_project(parent, "Trial")
-    assert project.schema_version >= 14
+    assert project.schema_version >= 16
 
     db = service.require_project_db()
     root = Path(project.root_path)

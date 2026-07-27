@@ -506,6 +506,65 @@ describe("M1 shell", () => {
     );
   });
 
+  it("runs full M2 to M4 production pipeline", async () => {
+    const api = createApi({
+      request: vi.fn().mockImplementation(async (method: string) => {
+        if (method === "project.current") {
+          return {
+            project: {
+              id: "p1",
+              name: "试播项目",
+              root_path: "/tmp/demo",
+              schema_version: 16,
+            },
+          };
+        }
+        if (method === "project.list_recent") return { projects: [] };
+        if (method === "job.list") return { jobs: [] };
+        if (method === "project.overview") return emptyOverview;
+        if (method === "trial.bootstrap_pipeline") {
+          return {
+            shot_count: 18,
+            production_items: 18,
+            timeline_duration_ms: 40000,
+            ready_for_export: true,
+            episode_id: "ep-1",
+            exports: [
+              { profile: "master" },
+              { profile: "douyin" },
+              { profile: "hongguo" },
+            ],
+          };
+        }
+        if (method === "gate.status") {
+          return {
+            ready_for_batch_production: true,
+            ready_for_export: true,
+            gates: {
+              story_package: { status: "confirmed", valid: true },
+              identity_and_locations: { status: "confirmed", valid: true },
+              episode_storyboard_and_dialogue: { status: "confirmed", valid: true },
+              episode_rough_cut: { status: "confirmed", valid: true },
+            },
+          };
+        }
+        return { status: "ok" };
+      }),
+    });
+    const user = userEvent.setup();
+    render(<App api={api} showDiagnostics />);
+    await user.click(await screen.findByRole("button", { name: "生产交付" }));
+    await user.click(await screen.findByRole("button", { name: "跑通 M2 到 M4 流水线" }));
+    expect(await screen.findByText(/M2–M4 流水线完成/)).toBeInTheDocument();
+    expect(screen.getByLabelText("生产统计")).toHaveTextContent("镜头 18");
+    expect(screen.getByLabelText("导出配置")).toHaveTextContent("master");
+    expect(api.request).toHaveBeenCalledWith(
+      "trial.bootstrap_pipeline",
+      {},
+      expect.any(String),
+    );
+  });
+
   it("bootstraps trial project and shows confirmed M2 gates", async () => {
     const api = createApi({
       request: vi.fn().mockImplementation(async (method: string) => {

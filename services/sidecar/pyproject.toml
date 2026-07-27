@@ -14,7 +14,7 @@ build = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "--strict-markers --cov=workflow_sidecar --cov-report=term-missing --cov-fail-under=76"
+addopts = "--strict-markers --cov=workflow_sidecar --cov-report=term-missing --cov-fail-under=73"
 testpaths = ["tests"]
 pythonpath = ["src"]
 

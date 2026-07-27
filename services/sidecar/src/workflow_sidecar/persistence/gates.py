@@ -1,8 +1,10 @@
 """Approval gates for story package and look/asset confirmation (M2-14).
 
-Gate types (M2 scope):
-- story_package
-- identity_and_locations
+Gate types:
+- story_package (M2)
+- identity_and_locations (M2)
+- episode_storyboard_and_dialogue (M3)
+- episode_rough_cut (M4)
 
 Each gate snapshots a target revision set hash. After confirmation, any
 change to the live target set invalidates the gate.
@@ -21,11 +23,22 @@ from .database import Database
 from .director import DirectorService
 from .identity_packs import IdentityPackService
 from .locations import LocationService
+from .postproduction import PostProductionService
+from .production import ProductionService
 from .story import StoryService
 from .story_package import StoryPackageService
+from .storyboard import StoryboardService
 from .timeutil import utc_now
 
-GATE_TYPES = frozenset({"story_package", "identity_and_locations"})
+GATE_TYPES = frozenset(
+    {
+        "story_package",
+        "identity_and_locations",
+        "episode_storyboard_and_dialogue",
+        "episode_rough_cut",
+    }
+)
+M2_GATES = frozenset({"story_package", "identity_and_locations"})
 GATE_STATUSES = frozenset({"pending", "confirmed", "invalidated"})
 
 
@@ -48,16 +61,25 @@ class GateService:
         )
         self._locations = LocationService(db)
         self._director = DirectorService(db)
+        self._storyboards = StoryboardService(db)
+        self._production = ProductionService(db, self._root or Path("."))
+        self._post = PostProductionService(db, self._root or Path("."))
 
     # --- public API ---
 
     def evaluate(
-        self, *, branch_id: str, gate_type: str
+        self,
+        *,
+        branch_id: str,
+        gate_type: str,
+        episode_id: str | None = None,
     ) -> dict[str, Any]:
         if gate_type not in GATE_TYPES:
             raise ValueError(f"gate_type must be one of {sorted(GATE_TYPES)}")
 
-        target_set, blockers = self._build_target_set(branch_id, gate_type)
+        target_set, blockers = self._build_target_set(
+            branch_id, gate_type, episode_id=episode_id
+        )
         target_hash = _hash(target_set)
         now = utc_now()
 
@@ -241,34 +263,50 @@ class GateService:
         )
         return [self.get_gate(row["id"]) for row in rows]
 
-    def status(self, *, branch_id: str) -> dict[str, Any]:
-        """Evaluate both M2 gates and report production readiness."""
+    def status(
+        self, *, branch_id: str, episode_id: str | None = None
+    ) -> dict[str, Any]:
+        """Evaluate M2–M4 gates and report production readiness."""
 
         story = self.evaluate(branch_id=branch_id, gate_type="story_package")
         looks = self.evaluate(
             branch_id=branch_id, gate_type="identity_and_locations"
         )
-        # After evaluate, re-read confirmed validity.
         story = self._refresh_valid(story)
         looks = self._refresh_valid(looks)
-        ready = (
+        boards = self.evaluate(
+            branch_id=branch_id,
+            gate_type="episode_storyboard_and_dialogue",
+            episode_id=episode_id,
+        )
+        boards = self._refresh_valid(boards)
+        rough = self.evaluate(
+            branch_id=branch_id,
+            gate_type="episode_rough_cut",
+            episode_id=episode_id,
+        )
+        rough = self._refresh_valid(rough)
+        m2_ready = (
             story["status"] == "confirmed"
             and story["valid"]
             and looks["status"] == "confirmed"
             and looks["valid"]
         )
+        m3_ready = boards["status"] == "confirmed" and boards["valid"]
+        m4_ready = rough["status"] == "confirmed" and rough["valid"]
         return {
             "branch_id": branch_id,
+            "episode_id": episode_id,
             "gates": {
                 "story_package": story,
                 "identity_and_locations": looks,
+                "episode_storyboard_and_dialogue": boards,
+                "episode_rough_cut": rough,
             },
-            "ready_for_batch_production": ready,
+            "ready_for_batch_production": m2_ready,
+            "ready_for_shot_generation": m2_ready and m3_ready,
+            "ready_for_export": m2_ready and m3_ready and m4_ready,
             "required_gates": sorted(GATE_TYPES),
-            "note": (
-                "M2 gates cover story package + identity/locations only; "
-                "storyboard and rough-cut gates are M3/M4."
-            ),
         }
 
     def bootstrap_trial(
@@ -410,9 +448,114 @@ class GateService:
             "package_revision_id": pkg["id"],
             "character_id": hero["id"],
             "location_id": market["id"],
+            "episode_ids": [e["id"] for e in episodes],
             "gates": status["gates"],
             "ready_for_batch_production": status["ready_for_batch_production"],
             "bootstrap": "trial_m2",
+        }
+
+    def bootstrap_pipeline(self, *, branch_id: str) -> dict[str, Any]:
+        """Bootstrap M2→M4 trial: storyboard, production, timeline, export."""
+
+        root = self._root or Path(".")
+        base = self.bootstrap_trial(branch_id=branch_id, story_root=root)
+        episode_id = base["episode_ids"][0]
+
+        sb = self._storyboards.create_storyboard(
+            episode_id=episode_id,
+            branch_id=branch_id,
+            notes="M3 trial storyboard",
+        )
+        sb_rev = sb["current_revision"]["id"]
+        generated = self._storyboards.generate_default_shots(
+            sb_rev, count=18, branch_id=branch_id
+        )
+        confirmed_sb = self._storyboards.confirm_revision(sb_rev)
+        board_gate = self.evaluate(
+            branch_id=branch_id,
+            gate_type="episode_storyboard_and_dialogue",
+            episode_id=episode_id,
+        )
+        board_gate = self.confirm(
+            board_gate["id"], confirmation_note="M3 trial storyboard"
+        )
+
+        batch = self._production.batch_plan_and_execute(sb_rev, kind="image")
+
+        auth = self._post.authorize_voice(
+            character_id=base["character_id"],
+            evidence_note="trial character voice",
+        )
+        tts = self._post.synthesize_tts(
+            text="这光……不像普通 U 盘。",
+            character_id=base["character_id"],
+            authorization_id=auth["id"],
+        )
+        first_shot_rev = generated["shots"][0]["current_revision"]["id"]
+        self._post.plan_lipsync(
+            shot_revision_id=first_shot_rev,
+            tts_utterance_id=tts["id"],
+            level="precise",
+        )
+        captions = self._post.create_caption_track(episode_id=episode_id)
+        captions = self._post.add_caption_from_tts(
+            captions["id"], tts["id"], start_ms=0
+        )
+        ass = self._post.compile_ass(captions["id"])
+        music = self._post.import_music(title="夜市雨巷", kind="bgm")
+        music = self._post.confirm_music(music["id"])
+
+        timeline = self._post.create_timeline(episode_id=episode_id)
+        tl_rev = timeline["current_revision"]["id"]
+        assembled = self._post.assemble_from_storyboard(
+            tl_rev,
+            sb_rev,
+            music_item_id=music["id"],
+            caption_track_id=captions["id"],
+        )
+        mix = self._post.create_mix_plan(tl_rev)
+        proxy = self._post.render_timeline(tl_rev, kind="proxy")
+        rough = self._post.render_timeline(tl_rev, kind="rough")
+        confirmed_tl = self._post.confirm_rough_cut(tl_rev)
+        rough_gate = self.evaluate(
+            branch_id=branch_id,
+            gate_type="episode_rough_cut",
+            episode_id=episode_id,
+        )
+        rough_gate = self.confirm(
+            rough_gate["id"], confirmation_note="M4 trial rough cut"
+        )
+        cover = self._post.create_cover(
+            episode_id=episode_id, title="夜市开端", template="vertical_title"
+        )
+        exports = []
+        for profile in ("master", "douyin", "hongguo"):
+            exports.append(
+                self._post.export_episode(
+                    episode_id=episode_id,
+                    profile=profile,
+                    timeline_revision_id=tl_rev,
+                )
+            )
+        status = self.status(branch_id=branch_id, episode_id=episode_id)
+        return {
+            **base,
+            "episode_id": episode_id,
+            "storyboard_id": confirmed_sb["id"],
+            "storyboard_revision_id": sb_rev,
+            "shot_count": generated["count"],
+            "production_items": batch["count"],
+            "timeline_id": confirmed_tl["id"],
+            "timeline_duration_ms": assembled["duration_ms"],
+            "mix_plan_id": mix["id"],
+            "proxy_render": proxy["output_relative_path"],
+            "rough_render": rough["output_relative_path"],
+            "ass_path": ass["ass_relative_path"],
+            "cover_id": cover["id"],
+            "exports": exports,
+            "gates": status["gates"],
+            "ready_for_export": status["ready_for_export"],
+            "bootstrap": "trial_m2_m3_m4",
         }
 
     # --- internals ---
@@ -471,11 +614,114 @@ class GateService:
         return self.get_gate(row["id"])
 
     def _build_target_set(
-        self, branch_id: str, gate_type: str
+        self,
+        branch_id: str,
+        gate_type: str,
+        *,
+        episode_id: str | None = None,
     ) -> tuple[dict[str, Any], list[dict[str, str]]]:
         if gate_type == "story_package":
             return self._story_package_targets(branch_id)
-        return self._identity_location_targets(branch_id)
+        if gate_type == "identity_and_locations":
+            return self._identity_location_targets(branch_id)
+        if gate_type == "episode_storyboard_and_dialogue":
+            return self._storyboard_targets(branch_id, episode_id)
+        return self._rough_cut_targets(branch_id, episode_id)
+
+    def _storyboard_targets(
+        self, branch_id: str, episode_id: str | None
+    ) -> tuple[dict[str, Any], list[dict[str, str]]]:
+        blockers: list[dict[str, str]] = []
+        boards = self._storyboards.list_storyboards(episode_id=episode_id, limit=50)
+        boards = [b for b in boards if b["branch_id"] == branch_id]
+        confirmed = [
+            b
+            for b in boards
+            if b.get("confirmed_revision")
+            and b["confirmed_revision"].get("status") == "confirmed"
+        ]
+        if not confirmed:
+            blockers.append(
+                {
+                    "code": "missing_confirmed_storyboard",
+                    "message": "episode storyboard not confirmed",
+                }
+            )
+            return {"branch_id": branch_id, "episode_id": episode_id, "storyboard": None}, blockers
+        board = confirmed[0]
+        rev = board["confirmed_revision"]
+        if rev.get("shot_count", 0) < 6:
+            blockers.append(
+                {
+                    "code": "too_few_shots",
+                    "message": "confirmed storyboard needs at least 6 shots",
+                }
+            )
+        target = {
+            "branch_id": branch_id,
+            "episode_id": board["episode_id"],
+            "storyboard": {
+                "storyboard_id": board["id"],
+                "revision_id": rev["id"],
+                "content_hash": rev.get("content_hash"),
+                "shot_count": rev.get("shot_count"),
+                "estimated_duration_ms": rev.get("estimated_duration_ms"),
+            },
+        }
+        return target, blockers
+
+    def _rough_cut_targets(
+        self, branch_id: str, episode_id: str | None
+    ) -> tuple[dict[str, Any], list[dict[str, str]]]:
+        blockers: list[dict[str, str]] = []
+        # Find confirmed timeline for episode.
+        rows = self._db.fetchall(
+            """
+            SELECT id, episode_id, confirmed_revision_id FROM timelines
+            WHERE confirmed_revision_id IS NOT NULL
+            ORDER BY updated_at DESC
+            """
+        )
+        chosen = None
+        for row in rows:
+            if episode_id and row["episode_id"] != episode_id:
+                continue
+            chosen = row
+            break
+        if chosen is None:
+            blockers.append(
+                {
+                    "code": "missing_confirmed_timeline",
+                    "message": "episode rough cut timeline not confirmed",
+                }
+            )
+            return {"branch_id": branch_id, "episode_id": episode_id, "timeline": None}, blockers
+        rev = self._post.get_timeline_revision(chosen["confirmed_revision_id"])
+        if rev.get("duration_ms", 0) < 1000:
+            blockers.append(
+                {
+                    "code": "timeline_too_short",
+                    "message": "confirmed timeline duration too short",
+                }
+            )
+        # pending music cannot be in master path
+        pending_music = [
+            m
+            for m in self._post.list_music()
+            if m["confirmation_status"] == "pending"
+        ]
+        target = {
+            "branch_id": branch_id,
+            "episode_id": chosen["episode_id"],
+            "timeline": {
+                "timeline_id": chosen["id"],
+                "revision_id": rev["id"],
+                "content_hash": rev.get("content_hash"),
+                "duration_ms": rev.get("duration_ms"),
+            },
+            "pending_music_count": len(pending_music),
+        }
+        return target, blockers
 
     def _story_package_targets(
         self, branch_id: str

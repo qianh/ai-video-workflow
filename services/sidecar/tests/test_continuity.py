@@ -21,7 +21,7 @@ def test_continuity_ledger_conflicts_and_snapshot(tmp_path: Path) -> None:
     parent = tmp_path / "projects"
     parent.mkdir()
     project = service.create_project(parent, "Cont")
-    assert project.schema_version >= 14
+    assert project.schema_version >= 16
 
     db = service.require_project_db()
     story = StoryService(db, Path(project.root_path))

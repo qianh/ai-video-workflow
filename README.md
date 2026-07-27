@@ -1,6 +1,6 @@
 # AI Video Workflow
 
-面向 AI 连续漫剧生产的 macOS 桌面工作站。M0 纵向链路 + M1 底座 + **M2 创作闭环（至确认门）** 已落地：React → Tauri/Rust → Python Sidecar。
+面向 AI 连续漫剧生产的 macOS 桌面工作站。M0–M4 主链路已落地：React → Tauri/Rust → Python Sidecar（创作闭环 + 分镜生产 + 后期导出）。
 
 ## 当前能力
 
@@ -26,6 +26,8 @@
 - **时间化状态账本**：区间状态（outfit/injury/owner…）；同优先级重叠阻断；快照在无 blocker 时冻结有效状态。
 - **视觉圣经 / 导演预设**：project → episode → shot 三级继承；`locked_fields` 硬约束不可被下级覆盖；主版本变更产出影响报告。
 - **M2 确认门**：`story_package` 与 `identity_and_locations`；确认后目标修订集合哈希变化则自动失效；`trial.bootstrap` 一键搭试验项目并确认。
+- **M3 分镜生产线**：AWAP 能力目录/探测/路由/预算门禁；资产库；分镜 18–30 镜头；生产项指纹与 stale 传播；QC 审核队列；分镜确认门。
+- **M4 后期交付**：声音授权 + mock TTS/口型；字幕 ASS；音乐待确认库；非破坏时间线；混音计划；FFmpeg/代理渲染；粗剪确认门；封面；母版/抖音/红果导出；`trial.bootstrap_pipeline` 端到端。
 
 项目 RPC：`project.create` / `open` / `close` / `current` / `list_recent` / `overview`。  
 故事 RPC：`story.import_source` / `list_sources` / `split_chapters` / `list_chunks` / `create_event` / `list_events` / `create_edge` / `list_edges` / `list_branches` / `create_branch` / `fork_branch` / `set_primary` / `archive_branch`。  
@@ -46,7 +48,12 @@
 连续性 RPC：`continuity.add` / `end` / `supersede` / `get` / `list` / `effective` / `check` / `snapshot` / `list_snapshots` / `overview`。  
 视觉圣经 RPC：`visual.create` / `add_revision` / `approve` / `resolve` / `list`。  
 导演预设 RPC：`director.create` / `add_revision` / `approve` / `resolve` / `list` / `overview`。  
-确认门 RPC：`gate.evaluate` / `confirm` / `get` / `list` / `status`；`trial.bootstrap`。  
+确认门 RPC：`gate.evaluate` / `confirm` / `get` / `list` / `status`；`trial.bootstrap` / `bootstrap_pipeline`。  
+AWAP RPC：`awap.catalog` / `probe` / `route`。  
+资产 RPC：`asset.create` / `list` / `lock` / `confirm_license`。  
+分镜 RPC：`storyboard.create` / `generate_shots` / `confirm` / `list` / `get`。  
+生产 RPC：`production.batch` / `list` / `mark_stale` / `lock`；`qc.list_reviews` / `resolve`。  
+后期 RPC：`tts.authorize` / `synthesize`；`lipsync.plan`；`caption.*`；`music.*`；`timeline.*`；`mix.create`；`render.timeline`；`cover.create`；`export.episode`。  
 任务 RPC：`job.enqueue` / `get` / `list` / `claim` / `complete` / `fail` / `cancel` / `pause` / `resume` / `reclaim_expired`。  
 环境 RPC：`env.summary`、`env.resolve`（必须传 `allow_keys`）。  
 快照 RPC：`snapshot.create`、`snapshot.list`。  

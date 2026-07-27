@@ -27,12 +27,17 @@ from .persistence.creative_packs import CreativePackService
 from .persistence.director import DirectorService
 from .persistence.drafts import DraftService
 from .persistence.episode_scripts import EpisodeScriptService
+from .persistence.assets import AssetService
+from .persistence.awap import AwapService
 from .persistence.gates import GateService
 from .persistence.generation import GenerationService
 from .persistence.identity_packs import IdentityPackService
 from .persistence.locations import LocationService
+from .persistence.postproduction import PostProductionService
+from .persistence.production import ProductionService
 from .persistence.story import StoryService
 from .persistence.story_package import StoryPackageService
+from .persistence.storyboard import StoryboardService
 from .protocol import Request, error_response, event, success_response
 
 
@@ -251,6 +256,26 @@ class SidecarRuntime:
             await self._execute_gates(request)
             return
 
+        if (
+            request.method.startswith("awap.")
+            or request.method.startswith("asset.")
+            or request.method.startswith("storyboard.")
+            or request.method.startswith("shot.")
+            or request.method.startswith("production.")
+            or request.method.startswith("qc.")
+            or request.method.startswith("tts.")
+            or request.method.startswith("caption.")
+            or request.method.startswith("music.")
+            or request.method.startswith("timeline.")
+            or request.method.startswith("mix.")
+            or request.method.startswith("render.")
+            or request.method.startswith("export.")
+            or request.method.startswith("cover.")
+            or request.method.startswith("lipsync.")
+        ):
+            await self._execute_m34(request)
+            return
+
         if request.method.startswith("job."):
             await self._execute_job(request)
             return
@@ -354,6 +379,31 @@ class SidecarRuntime:
         return GateService(
             self._workspace.require_project_db(),
             Path(current.root_path),
+        )
+
+    def _project_root(self) -> Path:
+        current = self._workspace.current
+        if current is None:
+            raise ValueError("no project is open")
+        return Path(current.root_path)
+
+    def _awap(self) -> AwapService:
+        return AwapService(self._workspace.require_project_db())
+
+    def _assets(self) -> AssetService:
+        return AssetService(self._workspace.require_project_db(), self._project_root())
+
+    def _storyboards(self) -> StoryboardService:
+        return StoryboardService(self._workspace.require_project_db())
+
+    def _production(self) -> ProductionService:
+        return ProductionService(
+            self._workspace.require_project_db(), self._project_root()
+        )
+
+    def _post(self) -> PostProductionService:
+        return PostProductionService(
+            self._workspace.require_project_db(), self._project_root()
         )
 
     def _resolve_branch_id(self, params: dict[str, Any]) -> str:
@@ -552,9 +602,13 @@ class SidecarRuntime:
             gate_type = params.get("gate_type")
             if not isinstance(gate_type, str):
                 raise ValueError("gate_type must be a string")
+            episode_id = params.get("episode_id")
+            if episode_id is not None and not isinstance(episode_id, str):
+                raise ValueError("episode_id must be a string")
             result = svc.evaluate(
                 branch_id=self._resolve_branch_id(params),
                 gate_type=gate_type,
+                episode_id=episode_id,
             )
             self._emit(success_response(request.id, result))
             return
@@ -588,7 +642,13 @@ class SidecarRuntime:
             return
 
         if method == "gate.status":
-            result = svc.status(branch_id=self._resolve_branch_id(params))
+            episode_id = params.get("episode_id")
+            if episode_id is not None and not isinstance(episode_id, str):
+                raise ValueError("episode_id must be a string")
+            result = svc.status(
+                branch_id=self._resolve_branch_id(params),
+                episode_id=episode_id,
+            )
             self._emit(success_response(request.id, result))
             return
 
@@ -597,6 +657,477 @@ class SidecarRuntime:
                 branch_id=self._resolve_branch_id(params)
             )
             self._emit(success_response(request.id, result))
+            return
+
+        if method == "trial.bootstrap_pipeline":
+            result = svc.bootstrap_pipeline(
+                branch_id=self._resolve_branch_id(params)
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        self._emit(
+            error_response(
+                request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
+            )
+        )
+
+    async def _execute_m34(self, request: Request) -> None:
+        method = request.method
+        params = request.params
+        p = params
+
+        if method == "awap.catalog":
+            self._emit(success_response(request.id, self._awap().catalog()))
+            return
+        if method == "awap.probe":
+            capability = p.get("capability")
+            if capability is not None and not isinstance(capability, str):
+                raise ValueError("capability must be a string")
+            self._emit(success_response(request.id, self._awap().probe(capability)))
+            return
+        if method == "awap.route":
+            capability = p.get("capability")
+            if not isinstance(capability, str):
+                raise ValueError("capability must be a string")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._awap().route(
+                        capability=capability,
+                        allow_paid=bool(p.get("allow_paid", False)),
+                        prefer=p.get("prefer"),
+                    ),
+                )
+            )
+            return
+
+        if method == "asset.create":
+            title = p.get("title")
+            asset_type = p.get("asset_type", "other")
+            if not isinstance(title, str) or not isinstance(asset_type, str):
+                raise ValueError("title and asset_type must be strings")
+            data = p.get("bytes_base64")
+            raw = None
+            if isinstance(data, str) and data:
+                import base64
+
+                raw = base64.b64decode(data)
+            self._emit(
+                success_response(
+                    request.id,
+                    self._assets().create_asset(
+                        title=title,
+                        asset_type=asset_type,
+                        role=str(p.get("role") or "generic"),
+                        relative_path=p.get("relative_path"),
+                        bytes_data=raw,
+                        mime_type=p.get("mime_type"),
+                        license_status=str(p.get("license_status") or "pending"),
+                    ),
+                )
+            )
+            return
+        if method == "asset.list":
+            limit = p.get("limit", 100)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            self._emit(
+                success_response(
+                    request.id, {"assets": self._assets().list_assets(limit=limit)}
+                )
+            )
+            return
+        if method == "asset.lock":
+            asset_id = p.get("asset_id")
+            if not isinstance(asset_id, str):
+                raise ValueError("asset_id must be a string")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._assets().lock_asset(asset_id, locked=bool(p.get("locked", True))),
+                )
+            )
+            return
+        if method == "asset.confirm_license":
+            asset_id = p.get("asset_id")
+            if not isinstance(asset_id, str):
+                raise ValueError("asset_id must be a string")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._assets().confirm_license(
+                        asset_id,
+                        license_type=p.get("license_type"),
+                        usage_scope=p.get("usage_scope"),
+                        note=p.get("note"),
+                    ),
+                )
+            )
+            return
+
+        if method == "storyboard.create":
+            episode_id = p.get("episode_id")
+            if not isinstance(episode_id, str):
+                raise ValueError("episode_id must be a string")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._storyboards().create_storyboard(
+                        episode_id=episode_id,
+                        branch_id=self._resolve_branch_id(p),
+                        script_revision_id=p.get("script_revision_id"),
+                        director_preset_revision_id=p.get("director_preset_revision_id"),
+                        visual_bible_revision_id=p.get("visual_bible_revision_id"),
+                        notes=p.get("notes"),
+                    ),
+                )
+            )
+            return
+        if method == "storyboard.generate_shots":
+            revision_id = p.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            count = p.get("count", 24)
+            if isinstance(count, bool) or not isinstance(count, int):
+                raise ValueError("count must be an integer")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._storyboards().generate_default_shots(
+                        revision_id,
+                        count=count,
+                        branch_id=self._resolve_branch_id(p),
+                    ),
+                )
+            )
+            return
+        if method == "storyboard.confirm":
+            revision_id = p.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            self._emit(
+                success_response(
+                    request.id, self._storyboards().confirm_revision(revision_id)
+                )
+            )
+            return
+        if method == "storyboard.list":
+            self._emit(
+                success_response(
+                    request.id,
+                    {
+                        "storyboards": self._storyboards().list_storyboards(
+                            episode_id=p.get("episode_id")
+                        )
+                    },
+                )
+            )
+            return
+        if method == "storyboard.get":
+            storyboard_id = p.get("storyboard_id")
+            if not isinstance(storyboard_id, str):
+                raise ValueError("storyboard_id must be a string")
+            self._emit(
+                success_response(
+                    request.id, self._storyboards().get_storyboard(storyboard_id)
+                )
+            )
+            return
+
+        if method == "production.batch":
+            revision_id = p.get("storyboard_revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("storyboard_revision_id must be a string")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._production().batch_plan_and_execute(
+                        revision_id, kind=str(p.get("kind") or "image")
+                    ),
+                )
+            )
+            return
+        if method == "production.list":
+            self._emit(
+                success_response(
+                    request.id,
+                    {
+                        "items": self._production().list_items(
+                            storyboard_revision_id=p.get("storyboard_revision_id")
+                        )
+                    },
+                )
+            )
+            return
+        if method == "production.mark_stale":
+            upstream_type = p.get("upstream_type")
+            upstream_id = p.get("upstream_id")
+            if not isinstance(upstream_type, str) or not isinstance(upstream_id, str):
+                raise ValueError("upstream_type and upstream_id must be strings")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._production().mark_upstream_changed(
+                        upstream_type=upstream_type, upstream_id=upstream_id
+                    ),
+                )
+            )
+            return
+        if method == "production.lock":
+            item_id = p.get("item_id")
+            if not isinstance(item_id, str):
+                raise ValueError("item_id must be a string")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._production().lock_item(
+                        item_id, locked=bool(p.get("locked", True))
+                    ),
+                )
+            )
+            return
+        if method == "qc.list_reviews":
+            self._emit(
+                success_response(
+                    request.id,
+                    {
+                        "items": self._production().list_review_queue(
+                            open_only=bool(p.get("open_only", True))
+                        )
+                    },
+                )
+            )
+            return
+        if method == "qc.resolve":
+            item_id = p.get("item_id")
+            status = p.get("status")
+            if not isinstance(item_id, str) or not isinstance(status, str):
+                raise ValueError("item_id and status must be strings")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._production().resolve_review(
+                        item_id, status=status, note=p.get("note")
+                    ),
+                )
+            )
+            return
+
+        if method == "tts.authorize":
+            self._emit(
+                success_response(
+                    request.id,
+                    self._post().authorize_voice(
+                        character_id=p.get("character_id"),
+                        voice_profile_id=p.get("voice_profile_id"),
+                        evidence_note=p.get("evidence_note"),
+                    ),
+                )
+            )
+            return
+        if method == "tts.synthesize":
+            text = p.get("text")
+            if not isinstance(text, str):
+                raise ValueError("text must be a string")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._post().synthesize_tts(
+                        text=text,
+                        character_id=p.get("character_id"),
+                        voice_profile_id=p.get("voice_profile_id"),
+                        dialogue_line_revision_id=p.get("dialogue_line_revision_id"),
+                        authorization_id=p.get("authorization_id"),
+                    ),
+                )
+            )
+            return
+        if method == "lipsync.plan":
+            shot_revision_id = p.get("shot_revision_id")
+            tts_utterance_id = p.get("tts_utterance_id")
+            if not isinstance(shot_revision_id, str) or not isinstance(
+                tts_utterance_id, str
+            ):
+                raise ValueError("shot_revision_id and tts_utterance_id must be strings")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._post().plan_lipsync(
+                        shot_revision_id=shot_revision_id,
+                        tts_utterance_id=tts_utterance_id,
+                        level=str(p.get("level") or "simplified"),
+                    ),
+                )
+            )
+            return
+
+        if method == "caption.create_track":
+            episode_id = p.get("episode_id")
+            if not isinstance(episode_id, str):
+                raise ValueError("episode_id must be a string")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._post().create_caption_track(
+                        episode_id=episode_id, style=p.get("style")
+                    ),
+                )
+            )
+            return
+        if method == "caption.add_from_tts":
+            track_id = p.get("track_id")
+            tts_id = p.get("tts_utterance_id")
+            start_ms = p.get("start_ms", 0)
+            if not isinstance(track_id, str) or not isinstance(tts_id, str):
+                raise ValueError("track_id and tts_utterance_id must be strings")
+            if isinstance(start_ms, bool) or not isinstance(start_ms, int):
+                raise ValueError("start_ms must be an integer")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._post().add_caption_from_tts(
+                        track_id, tts_id, start_ms=start_ms
+                    ),
+                )
+            )
+            return
+        if method == "caption.compile_ass":
+            track_id = p.get("track_id")
+            if not isinstance(track_id, str):
+                raise ValueError("track_id must be a string")
+            self._emit(success_response(request.id, self._post().compile_ass(track_id)))
+            return
+
+        if method == "music.import":
+            title = p.get("title")
+            if not isinstance(title, str):
+                raise ValueError("title must be a string")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._post().import_music(
+                        title=title,
+                        kind=str(p.get("kind") or "bgm"),
+                        url=p.get("url"),
+                    ),
+                )
+            )
+            return
+        if method == "music.confirm":
+            item_id = p.get("item_id")
+            if not isinstance(item_id, str):
+                raise ValueError("item_id must be a string")
+            self._emit(
+                success_response(request.id, self._post().confirm_music(item_id))
+            )
+            return
+        if method == "music.list":
+            self._emit(
+                success_response(
+                    request.id,
+                    {
+                        "items": self._post().list_music(
+                            confirmed_only=bool(p.get("confirmed_only", False))
+                        )
+                    },
+                )
+            )
+            return
+
+        if method == "timeline.create":
+            episode_id = p.get("episode_id")
+            if not isinstance(episode_id, str):
+                raise ValueError("episode_id must be a string")
+            self._emit(
+                success_response(
+                    request.id, self._post().create_timeline(episode_id=episode_id)
+                )
+            )
+            return
+        if method == "timeline.assemble":
+            timeline_revision_id = p.get("timeline_revision_id")
+            storyboard_revision_id = p.get("storyboard_revision_id")
+            if not isinstance(timeline_revision_id, str) or not isinstance(
+                storyboard_revision_id, str
+            ):
+                raise ValueError(
+                    "timeline_revision_id and storyboard_revision_id must be strings"
+                )
+            self._emit(
+                success_response(
+                    request.id,
+                    self._post().assemble_from_storyboard(
+                        timeline_revision_id,
+                        storyboard_revision_id,
+                        music_item_id=p.get("music_item_id"),
+                        caption_track_id=p.get("caption_track_id"),
+                    ),
+                )
+            )
+            return
+        if method == "timeline.confirm":
+            revision_id = p.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            self._emit(
+                success_response(
+                    request.id, self._post().confirm_rough_cut(revision_id)
+                )
+            )
+            return
+        if method == "mix.create":
+            revision_id = p.get("timeline_revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("timeline_revision_id must be a string")
+            self._emit(
+                success_response(request.id, self._post().create_mix_plan(revision_id))
+            )
+            return
+        if method == "render.timeline":
+            revision_id = p.get("timeline_revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("timeline_revision_id must be a string")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._post().render_timeline(
+                        revision_id, kind=str(p.get("kind") or "proxy")
+                    ),
+                )
+            )
+            return
+        if method == "cover.create":
+            episode_id = p.get("episode_id")
+            title = p.get("title")
+            if not isinstance(episode_id, str) or not isinstance(title, str):
+                raise ValueError("episode_id and title must be strings")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._post().create_cover(
+                        episode_id=episode_id,
+                        title=title,
+                        template=str(p.get("template") or "vertical_title"),
+                    ),
+                )
+            )
+            return
+        if method == "export.episode":
+            episode_id = p.get("episode_id")
+            profile = p.get("profile")
+            if not isinstance(episode_id, str) or not isinstance(profile, str):
+                raise ValueError("episode_id and profile must be strings")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._post().export_episode(
+                        episode_id=episode_id,
+                        profile=profile,
+                        timeline_revision_id=p.get("timeline_revision_id"),
+                    ),
+                )
+            )
             return
 
         self._emit(
