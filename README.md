@@ -20,6 +20,7 @@
 - **生成流水线**：`plan → execute → review`；执行只产草稿，审阅隔离，不自动正式修订。
 - **故事包 / 世界规则 / 季时间线**：hard 规则可阻断正式包；故事包不内嵌媒体提示词；分集容器与 timeline beats 可审批出口。
 - **分集剧本编辑**：场景 / 台词（稳定 line_id + 不可变修订）/ 钩子；校验后批准写入 `episode.current_script_revision_id`。
+- **角色 / 关系 / 声音档案**：稳定 Character + 修订；有向关系；VoiceProfile 可挂角色或旁白（身份包在 M2-10）。
 
 项目 RPC：`project.create` / `open` / `close` / `current` / `list_recent` / `overview`。  
 故事 RPC：`story.import_source` / `list_sources` / `split_chapters` / `list_chunks` / `create_event` / `list_events` / `create_edge` / `list_edges` / `list_branches` / `create_branch` / `fork_branch` / `set_primary` / `archive_branch`。  
@@ -30,6 +31,9 @@
 季/分集 RPC：`season.add_beat` / `list_beats` / `ensure_episodes` / `list_episodes` / `overview`。  
 故事包 RPC：`package.create` / `approve` / `get` / `list`。  
 剧本 RPC：`episode.get` / `update_title`；`script.create` / `update` / `get` / `tree` / `list` / `add_scene` / `update_scene` / `list_scenes` / `add_dialogue` / `revise_dialogue` / `list_dialogue` / `add_hook` / `list_hooks` / `validate` / `approve`。  
+角色 RPC：`character.create` / `get` / `list` / `update_revision` / `validate` / `approve` / `overview`。  
+关系 RPC：`relationship.create` / `list` / `approve`。  
+声音 RPC：`voice.create` / `list` / `approve`。  
 任务 RPC：`job.enqueue` / `get` / `list` / `claim` / `complete` / `fail` / `cancel` / `pause` / `resume` / `reclaim_expired`。  
 环境 RPC：`env.summary`、`env.resolve`（必须传 `allow_keys`）。  
 快照 RPC：`snapshot.create`、`snapshot.list`。  

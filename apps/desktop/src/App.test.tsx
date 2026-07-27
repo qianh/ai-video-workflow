@@ -506,6 +506,92 @@ describe("M1 shell", () => {
     );
   });
 
+  it("creates sample characters relationships and voice profiles", async () => {
+    const hero = {
+      id: "char-1",
+      current_revision: { id: "crev-1", name: "阿宁", status: "draft" },
+    };
+    const support = {
+      id: "char-2",
+      current_revision: { id: "crev-2", name: "陈叔", status: "draft" },
+    };
+    let createCount = 0;
+    const api = createApi({
+      request: vi.fn().mockImplementation(async (method: string) => {
+        if (method === "project.current") {
+          return {
+            project: {
+              id: "p1",
+              name: "试播项目",
+              root_path: "/tmp/demo",
+              schema_version: 9,
+            },
+          };
+        }
+        if (method === "project.list_recent") return { projects: [] };
+        if (method === "job.list") return { jobs: [] };
+        if (method === "project.overview") return emptyOverview;
+        if (method === "character.create") {
+          createCount += 1;
+          return createCount === 1 ? hero : support;
+        }
+        if (method === "character.approve") {
+          return {
+            id: "char-x",
+            current_revision: { id: "crev-x", name: "ok", status: "approved" },
+          };
+        }
+        if (method === "relationship.create") {
+          return {
+            id: "rel-1",
+            current_revision: { id: "rrev-1", status: "draft" },
+          };
+        }
+        if (method === "relationship.approve") {
+          return {
+            id: "rel-1",
+            current_revision: { id: "rrev-1", status: "approved" },
+          };
+        }
+        if (method === "voice.create") {
+          return {
+            id: "voice-1",
+            current_revision: { id: "vrev-1", status: "draft" },
+          };
+        }
+        if (method === "voice.approve") {
+          return {
+            id: "voice-1",
+            current_revision: { id: "vrev-1", status: "approved" },
+          };
+        }
+        if (method === "character.overview") {
+          return {
+            characters: [
+              { id: "char-1", current_revision: { name: "阿宁", status: "approved" } },
+              { id: "char-2", current_revision: { name: "陈叔", status: "approved" } },
+            ],
+            relationships: [{ id: "rel-1" }],
+            voice_profiles: [{ id: "voice-1" }],
+          };
+        }
+        return { status: "ok" };
+      }),
+    });
+    const user = userEvent.setup();
+    render(<App api={api} showDiagnostics />);
+    await user.click(await screen.findByRole("button", { name: "角色声音" }));
+    await user.click(await screen.findByRole("button", { name: "创建样例角色与声音" }));
+    expect(await screen.findByText(/角色档案已建立/)).toBeInTheDocument();
+    expect(screen.getByLabelText("角色列表")).toHaveTextContent("阿宁");
+    expect(screen.getByLabelText("角色统计")).toHaveTextContent("关系 1");
+    expect(api.request).toHaveBeenCalledWith(
+      "voice.approve",
+      { revision_id: "vrev-1" },
+      expect.any(String),
+    );
+  });
+
   it("creates and approves an episode script with scenes dialogue and hooks", async () => {
     const api = createApi({
       request: vi.fn().mockImplementation(async (method: string) => {

@@ -21,6 +21,7 @@ from .persistence import (
 )
 from .persistence.overview import build_project_overview
 from .persistence.paths import file_sha256, resolve_project_path, to_project_relative
+from .persistence.characters import CharacterService
 from .persistence.creative_packs import CreativePackService
 from .persistence.drafts import DraftService
 from .persistence.episode_scripts import EpisodeScriptService
@@ -209,6 +210,14 @@ class SidecarRuntime:
             await self._execute_episode_script(request)
             return
 
+        if (
+            request.method.startswith("character.")
+            or request.method.startswith("relationship.")
+            or request.method.startswith("voice.")
+        ):
+            await self._execute_characters(request)
+            return
+
         if request.method.startswith("job."):
             await self._execute_job(request)
             return
@@ -279,6 +288,10 @@ class SidecarRuntime:
     def _scripts(self) -> EpisodeScriptService:
         self._workspace.require_project_db()
         return EpisodeScriptService(self._workspace.require_project_db())
+
+    def _characters(self) -> CharacterService:
+        self._workspace.require_project_db()
+        return CharacterService(self._workspace.require_project_db())
 
     def _resolve_branch_id(self, params: dict[str, Any]) -> str:
         branch_id = params.get("branch_id")
@@ -459,6 +472,184 @@ class SidecarRuntime:
                 raise ValueError("limit must be an integer")
             result = svc.list_package_revisions(limit=limit)
             self._emit(success_response(request.id, {"revisions": result}))
+            return
+
+        self._emit(
+            error_response(
+                request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
+            )
+        )
+
+    async def _execute_characters(self, request: Request) -> None:
+        svc = self._characters()
+        method = request.method
+        params = request.params
+
+        if method == "character.create":
+            name = params.get("name")
+            if not isinstance(name, str):
+                raise ValueError("name must be a string")
+            result = svc.create_character(
+                branch_id=self._resolve_branch_id(params),
+                name=name,
+                role=params.get("role", "supporting"),
+                age_feel=params.get("age_feel"),
+                body_type=params.get("body_type"),
+                appearance_rules=params.get("appearance_rules"),
+                personality=params.get("personality"),
+                goals=params.get("goals"),
+                immutable_traits=params.get("immutable_traits"),
+                slug=params.get("slug"),
+                notes=params.get("notes"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "character.get":
+            character_id = params.get("character_id")
+            if not isinstance(character_id, str):
+                raise ValueError("character_id must be a string")
+            self._emit(success_response(request.id, svc.get_character(character_id)))
+            return
+
+        if method == "character.list":
+            limit = params.get("limit", 50)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            branch_id = params.get("branch_id")
+            if branch_id is None:
+                branch_id = self._story().primary_branch_id()
+            elif not isinstance(branch_id, str):
+                raise ValueError("branch_id must be a string")
+            result = svc.list_characters(branch_id=branch_id, limit=limit)
+            self._emit(success_response(request.id, {"characters": result}))
+            return
+
+        if method == "character.update_revision":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            result = svc.update_character_revision(
+                revision_id,
+                name=params.get("name"),
+                role=params.get("role"),
+                age_feel=params.get("age_feel"),
+                body_type=params.get("body_type"),
+                appearance_rules=params.get("appearance_rules"),
+                personality=params.get("personality"),
+                goals=params.get("goals"),
+                immutable_traits=params.get("immutable_traits"),
+                notes=params.get("notes"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "character.validate":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            self._emit(
+                success_response(
+                    request.id, svc.validate_character_revision(revision_id)
+                )
+            )
+            return
+
+        if method == "character.approve":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            self._emit(
+                success_response(
+                    request.id, svc.approve_character_revision(revision_id)
+                )
+            )
+            return
+
+        if method == "relationship.create":
+            source = params.get("source_character_id")
+            target = params.get("target_character_id")
+            rel_type = params.get("relationship_type")
+            description = params.get("description")
+            if not all(isinstance(x, str) for x in (source, target, rel_type, description)):
+                raise ValueError(
+                    "source_character_id, target_character_id, "
+                    "relationship_type and description must be strings"
+                )
+            result = svc.create_relationship(
+                branch_id=self._resolve_branch_id(params),
+                source_character_id=source,
+                target_character_id=target,
+                relationship_type=rel_type,
+                description=description,
+                story_time_from=params.get("story_time_from"),
+                story_time_to=params.get("story_time_to"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "relationship.list":
+            limit = params.get("limit", 50)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            branch_id = params.get("branch_id")
+            if branch_id is None:
+                branch_id = self._story().primary_branch_id()
+            elif not isinstance(branch_id, str):
+                raise ValueError("branch_id must be a string")
+            result = svc.list_relationships(branch_id=branch_id, limit=limit)
+            self._emit(success_response(request.id, {"relationships": result}))
+            return
+
+        if method == "relationship.approve":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            self._emit(
+                success_response(
+                    request.id, svc.approve_relationship_revision(revision_id)
+                )
+            )
+            return
+
+        if method == "voice.create":
+            result = svc.create_voice_profile(
+                character_id=params.get("character_id"),
+                label=params.get("label"),
+                engine_adapter_id=params.get("engine_adapter_id", "local-tts"),
+                speed=params.get("speed", 1.0),
+                emotion_range=params.get("emotion_range"),
+                pronunciation_rules=params.get("pronunciation_rules"),
+                notes=params.get("notes"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "voice.list":
+            limit = params.get("limit", 50)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            character_id = params.get("character_id")
+            if character_id is not None and not isinstance(character_id, str):
+                raise ValueError("character_id must be a string")
+            result = svc.list_voice_profiles(
+                character_id=character_id, limit=limit
+            )
+            self._emit(success_response(request.id, {"voice_profiles": result}))
+            return
+
+        if method == "voice.approve":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            self._emit(
+                success_response(request.id, svc.approve_voice_revision(revision_id))
+            )
+            return
+
+        if method == "character.overview":
+            result = svc.continuity_overview(self._resolve_branch_id(params))
+            self._emit(success_response(request.id, result))
             return
 
         self._emit(

@@ -510,6 +510,111 @@ PROJECT_MIGRATIONS: list[Migration] = [
             ON script_hooks(script_revision_id, sort_order);
         """,
     ),
+    (
+        9,
+        """
+        CREATE TABLE characters (
+            id TEXT PRIMARY KEY,
+            branch_id TEXT NOT NULL,
+            slug TEXT,
+            status TEXT NOT NULL,
+            current_revision_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX idx_characters_branch ON characters(branch_id, status);
+
+        CREATE TABLE character_revisions (
+            id TEXT PRIMARY KEY,
+            character_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            name TEXT NOT NULL,
+            role TEXT,
+            age_feel TEXT,
+            body_type TEXT,
+            appearance_rules TEXT,
+            personality_json TEXT NOT NULL DEFAULT '[]',
+            goals TEXT,
+            immutable_traits_json TEXT NOT NULL DEFAULT '[]',
+            content_hash TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(character_id) REFERENCES characters(id),
+            UNIQUE(character_id, revision_no)
+        );
+
+        CREATE INDEX idx_character_revisions
+            ON character_revisions(character_id, revision_no);
+
+        CREATE TABLE character_relationships (
+            id TEXT PRIMARY KEY,
+            branch_id TEXT NOT NULL,
+            source_character_id TEXT NOT NULL,
+            target_character_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            current_revision_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(source_character_id) REFERENCES characters(id),
+            FOREIGN KEY(target_character_id) REFERENCES characters(id)
+        );
+
+        CREATE INDEX idx_character_relationships_branch
+            ON character_relationships(branch_id, status);
+
+        CREATE TABLE character_relationship_revisions (
+            id TEXT PRIMARY KEY,
+            relationship_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            relationship_type TEXT NOT NULL,
+            description TEXT NOT NULL,
+            story_time_from TEXT,
+            story_time_to TEXT,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(relationship_id) REFERENCES character_relationships(id),
+            UNIQUE(relationship_id, revision_no)
+        );
+
+        CREATE TABLE voice_profiles (
+            id TEXT PRIMARY KEY,
+            character_id TEXT,
+            label TEXT,
+            status TEXT NOT NULL,
+            current_revision_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(character_id) REFERENCES characters(id)
+        );
+
+        CREATE INDEX idx_voice_profiles_character
+            ON voice_profiles(character_id, status);
+
+        CREATE TABLE voice_profile_revisions (
+            id TEXT PRIMARY KEY,
+            voice_profile_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            engine_adapter_id TEXT NOT NULL,
+            voice_ref_asset_id TEXT,
+            speaker_embedding_asset_id TEXT,
+            speed REAL NOT NULL DEFAULT 1.0,
+            emotion_range_json TEXT NOT NULL DEFAULT '[]',
+            pronunciation_rules_json TEXT NOT NULL DEFAULT '{}',
+            authorization_record_id TEXT,
+            content_hash TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(voice_profile_id) REFERENCES voice_profiles(id),
+            UNIQUE(voice_profile_id, revision_no)
+        );
+
+        CREATE INDEX idx_voice_profile_revisions
+            ON voice_profile_revisions(voice_profile_id, revision_no);
+        """,
+    ),
 ]
 
 

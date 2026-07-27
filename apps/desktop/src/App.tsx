@@ -43,6 +43,7 @@ type ShellView =
   | "packs"
   | "package"
   | "scripts"
+  | "characters"
   | "drafts"
   | "generation"
   | "jobs"
@@ -167,6 +168,12 @@ export function App({
     hookCount: number;
     episodeStatus: string;
   } | null>(null);
+  const [characterSummary, setCharacterSummary] = useState<{
+    characterCount: number;
+    relationshipCount: number;
+    voiceCount: number;
+    names: string[];
+  } | null>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -237,6 +244,7 @@ export function App({
       setEpisodes([]);
       setPackageRevisions([]);
       setScriptSummary(null);
+      setCharacterSummary(null);
     }
   }, [api]);
 
@@ -674,6 +682,117 @@ export function App({
       });
       await refreshPackState();
       setView("packs");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const buildCharacterCast = async () => {
+    setBusy("character-setup");
+    try {
+      const hero = await api.request(
+        "character.create",
+        {
+          name: "阿宁",
+          role: "protagonist",
+          age_feel: "二十出头",
+          body_type: "纤瘦",
+          appearance_rules: "短发，雨衣，冷色调",
+          personality: ["冷静", "好奇"],
+          goals: "查清失踪真相",
+          immutable_traits: ["左眉疤"],
+        },
+        requestId("char-hero"),
+      );
+      const support = await api.request(
+        "character.create",
+        {
+          name: "陈叔",
+          role: "supporting",
+          appearance_rules: "中年摊主，围裙",
+          personality: ["热心", "碎嘴"],
+          goals: "守住夜市摊子",
+        },
+        requestId("char-support"),
+      );
+      const heroRev = String(
+        (hero.current_revision as { id?: string } | undefined)?.id ?? "",
+      );
+      const supportRev = String(
+        (support.current_revision as { id?: string } | undefined)?.id ?? "",
+      );
+      await api.request(
+        "character.approve",
+        { revision_id: heroRev },
+        requestId("char-hero-approve"),
+      );
+      await api.request(
+        "character.approve",
+        { revision_id: supportRev },
+        requestId("char-support-approve"),
+      );
+      const rel = await api.request(
+        "relationship.create",
+        {
+          source_character_id: String(hero.id),
+          target_character_id: String(support.id),
+          relationship_type: "acquaintance",
+          description: "夜市摊主认识阿宁",
+          story_time_from: "E01",
+        },
+        requestId("rel-create"),
+      );
+      const relRev = String(
+        (rel.current_revision as { id?: string } | undefined)?.id ?? "",
+      );
+      await api.request(
+        "relationship.approve",
+        { revision_id: relRev },
+        requestId("rel-approve"),
+      );
+      const voice = await api.request(
+        "voice.create",
+        {
+          character_id: String(hero.id),
+          label: "阿宁默认",
+          engine_adapter_id: "local-tts",
+          speed: 1.05,
+          emotion_range: ["平静", "警惕"],
+          pronunciation_rules: { U盘: "优盘" },
+        },
+        requestId("voice-create"),
+      );
+      const voiceRev = String(
+        (voice.current_revision as { id?: string } | undefined)?.id ?? "",
+      );
+      await api.request(
+        "voice.approve",
+        { revision_id: voiceRev },
+        requestId("voice-approve"),
+      );
+      const overview = await api.request(
+        "character.overview",
+        {},
+        requestId("char-overview"),
+      );
+      const characters =
+        (overview.characters as Array<{ current_revision?: { name?: string } }> | undefined) ??
+        [];
+      const relationships = (overview.relationships as unknown[] | undefined) ?? [];
+      const voices = (overview.voice_profiles as unknown[] | undefined) ?? [];
+      setCharacterSummary({
+        characterCount: characters.length,
+        relationshipCount: relationships.length,
+        voiceCount: voices.length,
+        names: characters.map((item) => String(item.current_revision?.name ?? "")),
+      });
+      setNotice({
+        tone: "success",
+        text: `角色档案已建立 · chars=${characters.length} · rels=${relationships.length} · voices=${voices.length}`,
+      });
+      setView("characters");
     } catch (error) {
       setNotice({ tone: "warning", text: errorMessage(error) });
     } finally {
@@ -1119,6 +1238,7 @@ export function App({
     { id: "packs", label: "创作包" },
     { id: "package", label: "故事包" },
     { id: "scripts", label: "分集剧本" },
+    { id: "characters", label: "角色声音" },
     { id: "drafts", label: "草稿修订" },
     { id: "generation", label: "生成流水线" },
     { id: "jobs", label: "任务中心" },
@@ -1531,6 +1651,65 @@ export function App({
                   ))}
                 </ul>
               )}
+            </>
+          )}
+        </section>
+      )}
+
+      {view === "characters" && (
+        <section className="console-panel" aria-label="角色声音">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">CHARACTERS · VOICE</p>
+              <h3>角色 · 关系 · 声音档案</h3>
+            </div>
+            <span className="panel-number">M2.09</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="创建样例角色与声音"
+                  className="action primary"
+                  onClick={() => void buildCharacterCast()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">R1</span>
+                  <span>
+                    <strong>创建样例角色与声音</strong>
+                    <small>character + relationship + voice</small>
+                  </span>
+                </button>
+              </div>
+              {!characterSummary ? (
+                <p className="empty-hint">尚未创建角色档案。</p>
+              ) : (
+                <div className="overview-columns">
+                  <div>
+                    <h4>角色</h4>
+                    <ul className="job-list" aria-label="角色列表">
+                      {characterSummary.names.map((name) => (
+                        <li key={name}>
+                          <code>approved</code> {name}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <h4>统计</h4>
+                    <ul className="job-list" aria-label="角色统计">
+                      <li>角色 {characterSummary.characterCount}</li>
+                      <li>关系 {characterSummary.relationshipCount}</li>
+                      <li>声音档案 {characterSummary.voiceCount}</li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+              <p className="empty-hint">
+                角色修订不含媒体提示词；身份包与定妆在 M2-10。
+              </p>
             </>
           )}
         </section>
