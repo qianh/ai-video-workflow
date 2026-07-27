@@ -565,6 +565,61 @@ describe("M1 shell", () => {
     );
   });
 
+  it("runs M5 continuous acceptance and shows grade", async () => {
+    const api = createApi({
+      request: vi.fn().mockImplementation(async (method: string) => {
+        if (method === "project.current") {
+          return {
+            project: {
+              id: "p1",
+              name: "试播项目",
+              root_path: "/tmp/demo",
+              schema_version: 16,
+            },
+          };
+        }
+        if (method === "project.list_recent") return { projects: [] };
+        if (method === "job.list") return { jobs: [] };
+        if (method === "project.overview") return emptyOverview;
+        if (method === "trial.accept_m5") {
+          return {
+            phase: "M5",
+            grade: "pass",
+            grade_reason: "pilot + 5-ep + 20-ep automated gates all passed",
+            elapsed_sec: 12.5,
+            report_json: "reports/m5_acceptance.json",
+            report_md: "reports/m5_acceptance.md",
+            pilot: { passed: true },
+            series_5: { passed: true, episode_count: 5 },
+            series_20: {
+              passed: true,
+              metrics: { episodes: 20 },
+            },
+          };
+        }
+        return { status: "ok" };
+      }),
+    });
+    const user = userEvent.setup();
+    render(<App api={api} showDiagnostics />);
+    await user.click(await screen.findByRole("button", { name: "M5 验收" }));
+    await user.click(await screen.findByRole("button", { name: "运行 M5 连续生产验收" }));
+    expect(await screen.findByText(/M5 验收 pass/)).toBeInTheDocument();
+    expect(screen.getByLabelText("M5 验收等级")).toHaveTextContent("pass");
+    expect(screen.getByLabelText("M5 验收套件")).toHaveTextContent("20");
+    expect(api.request).toHaveBeenCalledWith(
+      "trial.accept_m5",
+      {
+        mode: "all",
+        series_episodes: 5,
+        scale_episodes: 20,
+        shot_count: 6,
+        force_mock_render: true,
+      },
+      expect.any(String),
+    );
+  });
+
   it("bootstraps trial project and shows confirmed M2 gates", async () => {
     const api = createApi({
       request: vi.fn().mockImplementation(async (method: string) => {

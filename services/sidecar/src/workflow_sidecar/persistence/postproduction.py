@@ -672,18 +672,22 @@ class PostProductionService:
         timeline_revision_id: str,
         *,
         kind: str = "proxy",
+        force_mock: bool = False,
     ) -> dict[str, Any]:
         if kind not in {"proxy", "rough", "master"}:
             raise ValueError("kind must be proxy, rough, or master")
         rev = self.get_timeline_revision(timeline_revision_id)
         self._awap.route(capability="ffmpeg.transcode")
-        rel = f"renders/{kind}/{timeline_revision_id[:8]}.mp4"
+        rel = f"renders/{kind}/{timeline_revision_id[:8]}_{kind}.mp4"
         dest = self._root / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         # Prefer real ffmpeg color source if available; else mock file.
-        ffmpeg = shutil.which("ffmpeg")
+        # force_mock keeps multi-episode acceptance fast.
+        import os
+
+        ffmpeg = None if force_mock or os.environ.get("WORKFLOW_ACCEPTANCE_FAST") else shutil.which("ffmpeg")
         if ffmpeg:
-            duration_s = max(1, int(rev["duration_ms"] / 1000) or 3)
+            duration_s = max(1, min(2, int(rev["duration_ms"] / 1000) or 1))
             cmd = [
                 ffmpeg,
                 "-y",
@@ -794,6 +798,7 @@ class PostProductionService:
         profile: str,
         timeline_revision_id: str | None = None,
         music_confirmed: bool = True,
+        force_mock: bool = False,
     ) -> dict[str, Any]:
         if profile not in {"master", "douyin", "hongguo"}:
             raise ValueError("profile must be master, douyin, or hongguo")
@@ -807,11 +812,13 @@ class PostProductionService:
                 m["confirmation_status"] == "pending" for m in pending
             ):
                 raise ValueError("pending music cannot enter master")
-        rel = f"exports/{profile}/{episode_id[:8]}.mp4"
+        rel = f"exports/{profile}/{episode_id[:8]}_{profile}.mp4"
         dest = self._root / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         if timeline_revision_id:
-            rough = self.render_timeline(timeline_revision_id, kind="master")
+            rough = self.render_timeline(
+                timeline_revision_id, kind="master", force_mock=force_mock
+            )
             src = self._root / rough["output_relative_path"]
             if src.is_file():
                 shutil.copy2(src, dest)

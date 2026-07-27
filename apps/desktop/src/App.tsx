@@ -49,6 +49,7 @@ type ShellView =
   | "director"
   | "gates"
   | "production"
+  | "acceptance"
   | "drafts"
   | "generation"
   | "jobs"
@@ -219,6 +220,18 @@ export function App({
     durationMs: number;
     exports: string[];
     readyExport: boolean;
+  } | null>(null);
+  const [acceptanceSummary, setAcceptanceSummary] = useState<{
+    grade: string;
+    reason: string;
+    elapsedSec: number;
+    pilotPassed: boolean;
+    seriesPassed: boolean;
+    scalePassed: boolean;
+    seriesEpisodes: number;
+    scaleEpisodes: number;
+    reportJson?: string;
+    reportMd?: string;
   } | null>(null);
 
   const refreshStatus = useCallback(async () => {
@@ -817,6 +830,50 @@ export function App({
         text: `M2–M4 流水线完成 · shots=${String(pipe.shot_count)} · items=${String(pipe.production_items)} · export=${String(pipe.ready_for_export)} · profiles=${exports.join(",")}`,
       });
       setView("production");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runM5Acceptance = async () => {
+    setBusy("acceptance-m5");
+    try {
+      const report = await api.request(
+        "trial.accept_m5",
+        {
+          mode: "all",
+          series_episodes: 5,
+          scale_episodes: 20,
+          shot_count: 6,
+          force_mock_render: true,
+        },
+        requestId("trial-accept-m5"),
+      );
+      const series = (report.series_5 as Record<string, unknown> | undefined) ?? {};
+      const scale = (report.series_20 as Record<string, unknown> | undefined) ?? {};
+      const pilot = (report.pilot as Record<string, unknown> | undefined) ?? {};
+      setAcceptanceSummary({
+        grade: String(report.grade ?? "fail"),
+        reason: String(report.grade_reason ?? ""),
+        elapsedSec: Number(report.elapsed_sec ?? 0),
+        pilotPassed: Boolean(pilot.passed),
+        seriesPassed: Boolean(series.passed),
+        scalePassed: Boolean(scale.passed),
+        seriesEpisodes: Number(series.episode_count ?? 0),
+        scaleEpisodes: Number(
+          ((scale.metrics as Record<string, unknown> | undefined)?.episodes as number) ??
+            0,
+        ),
+        reportJson: report.report_json ? String(report.report_json) : undefined,
+        reportMd: report.report_md ? String(report.report_md) : undefined,
+      });
+      setNotice({
+        tone: report.grade === "fail" ? "warning" : "success",
+        text: `M5 验收 ${String(report.grade)} · pilot=${String(pilot.passed)} · 5集=${String(series.passed)} · 20集=${String(scale.passed)} · ${String(report.elapsed_sec)}s`,
+      });
+      setView("acceptance");
     } catch (error) {
       setNotice({ tone: "warning", text: errorMessage(error) });
     } finally {
@@ -1845,6 +1902,7 @@ export function App({
     { id: "director", label: "导演栈" },
     { id: "gates", label: "确认门" },
     { id: "production", label: "生产交付" },
+    { id: "acceptance", label: "M5 验收" },
     { id: "drafts", label: "草稿修订" },
     { id: "generation", label: "生成流水线" },
     { id: "jobs", label: "任务中心" },
@@ -2321,6 +2379,83 @@ export function App({
               )}
               <p className="empty-hint">
                 外部 CLI 缺失时自动 mock/降级；FFmpeg 可用则生成真实黑场代理片。
+              </p>
+            </>
+          )}
+        </section>
+      )}
+
+      {view === "acceptance" && (
+        <section className="console-panel" aria-label="M5 连续生产验收">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">M5 CONTINUOUS ACCEPTANCE</p>
+              <h3>试播 · 5 集 · 20 集产能验收</h3>
+            </div>
+            <span className="panel-number">M5</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="运行 M5 连续生产验收"
+                  className="action primary"
+                  onClick={() => void runM5Acceptance()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">A1</span>
+                  <span>
+                    <strong>运行 M5 验收</strong>
+                    <small>pilot + 5ep + 20ep · mock render</small>
+                  </span>
+                </button>
+              </div>
+              {!acceptanceSummary ? (
+                <p className="empty-hint">
+                  尚未运行验收。将自动生成试播导出、跨集状态变更、局部返工与产能指标报告。
+                </p>
+              ) : (
+                <div className="overview-columns">
+                  <div>
+                    <h4>等级</h4>
+                    <ul className="job-list" aria-label="M5 验收等级">
+                      <li>
+                        <code>{acceptanceSummary.grade}</code>
+                      </li>
+                      <li>{acceptanceSummary.reason}</li>
+                      <li>耗时 {acceptanceSummary.elapsedSec}s</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h4>套件</h4>
+                    <ul className="job-list" aria-label="M5 验收套件">
+                      <li>
+                        试播{" "}
+                        <code>{acceptanceSummary.pilotPassed ? "pass" : "fail"}</code>
+                      </li>
+                      <li>
+                        5 集{" "}
+                        <code>{acceptanceSummary.seriesPassed ? "pass" : "fail"}</code> ·{" "}
+                        {acceptanceSummary.seriesEpisodes} ep
+                      </li>
+                      <li>
+                        20 集{" "}
+                        <code>{acceptanceSummary.scalePassed ? "pass" : "fail"}</code> ·{" "}
+                        {acceptanceSummary.scaleEpisodes} ep
+                      </li>
+                      {acceptanceSummary.reportJson ? (
+                        <li>
+                          <code>{acceptanceSummary.reportJson}</code>
+                        </li>
+                      ) : null}
+                    </ul>
+                  </div>
+                </div>
+              )}
+              <p className="empty-hint">
+                人工评价清单（角色脸、配音口型字幕、节奏导演语言、可发布水平）仅记录在报告中，不自动打分。
               </p>
             </>
           )}

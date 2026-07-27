@@ -29,6 +29,7 @@ from .persistence.drafts import DraftService
 from .persistence.episode_scripts import EpisodeScriptService
 from .persistence.assets import AssetService
 from .persistence.awap import AwapService
+from .persistence.acceptance import AcceptanceService
 from .persistence.gates import GateService
 from .persistence.generation import GenerationService
 from .persistence.identity_packs import IdentityPackService
@@ -250,8 +251,10 @@ class SidecarRuntime:
             await self._execute_director(request)
             return
 
-        if request.method.startswith("gate.") or request.method.startswith(
-            "trial."
+        if (
+            request.method.startswith("gate.")
+            or request.method.startswith("trial.")
+            or request.method.startswith("acceptance.")
         ):
             await self._execute_gates(request)
             return
@@ -663,6 +666,62 @@ class SidecarRuntime:
             result = svc.bootstrap_pipeline(
                 branch_id=self._resolve_branch_id(params)
             )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method in {"trial.accept_m5", "acceptance.run"}:
+            current = self._workspace.current
+            if current is None:
+                raise ValueError("no project is open")
+            acc = AcceptanceService(
+                self._workspace.require_project_db(),
+                Path(current.root_path),
+            )
+            mode = params.get("mode", "all")
+            if not isinstance(mode, str):
+                raise ValueError("mode must be a string")
+            series_episodes = params.get("series_episodes", 5)
+            scale_episodes = params.get("scale_episodes", 20)
+            shot_count = params.get("shot_count", 6)
+            for name, value in (
+                ("series_episodes", series_episodes),
+                ("scale_episodes", scale_episodes),
+                ("shot_count", shot_count),
+            ):
+                if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                    raise ValueError(f"{name} must be a positive integer")
+            force_mock = params.get("force_mock_render", True)
+            if not isinstance(force_mock, bool):
+                raise ValueError("force_mock_render must be a boolean")
+            branch_id = self._resolve_branch_id(params)
+            if mode == "all":
+                result = acc.run_all(
+                    branch_id=branch_id,
+                    series_episodes=series_episodes,
+                    scale_episodes=scale_episodes,
+                    shot_count=shot_count,
+                    force_mock_render=force_mock,
+                )
+            elif mode == "pilot":
+                result = acc.run_pilot(
+                    branch_id=branch_id, force_mock_render=force_mock
+                )
+            elif mode == "series":
+                result = acc.run_series(
+                    branch_id=branch_id,
+                    episode_count=series_episodes,
+                    shot_count=shot_count,
+                    force_mock_render=force_mock,
+                )
+            elif mode == "scale":
+                result = acc.run_scale(
+                    branch_id=branch_id,
+                    episode_count=scale_episodes,
+                    shot_count=shot_count,
+                    force_mock_render=force_mock,
+                )
+            else:
+                raise ValueError("mode must be all, pilot, series, or scale")
             self._emit(success_response(request.id, result))
             return
 
