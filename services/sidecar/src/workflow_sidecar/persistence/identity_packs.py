@@ -889,11 +889,21 @@ class IdentityPackService:
         prompt: str,
         negative_prompt: str | None,
     ) -> dict[str, Any]:
-        use_grok = os.environ.get("WORKFLOW_ENABLE_GROK_LOOKS", "").strip() in {
+        # Default: use Grok when on PATH unless explicitly disabled.
+        disable = os.environ.get("WORKFLOW_DISABLE_GROK_LOOKS", "").strip().lower() in {
             "1",
             "true",
             "yes",
         }
+        force = os.environ.get("WORKFLOW_ENABLE_GROK_LOOKS", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        use_grok = (force or not disable) and bool(shutil.which("grok"))
+        # In pytest, skip real grok unless forced (avoid auth/cost in CI)
+        if os.environ.get("PYTEST_CURRENT_TEST") and not force:
+            use_grok = False
         if use_grok and shutil.which("grok"):
             try:
                 return self._generate_with_grok(

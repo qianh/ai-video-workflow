@@ -71,6 +71,7 @@ class SidecarRuntime:
         self._app_logger = JsonlLogger(
             default_log_path(project_root=None, global_db_path=self._global_db_path)
         )
+        self._worker_instance = None
 
     async def shutdown(self) -> None:
         self._workspace.close()
@@ -279,7 +280,7 @@ class SidecarRuntime:
             await self._execute_m34(request)
             return
 
-        if request.method.startswith("job."):
+        if request.method.startswith("job.") or request.method.startswith("worker."):
             await self._execute_job(request)
             return
 
@@ -2964,11 +2965,42 @@ class SidecarRuntime:
             self._emit(success_response(request.id, {"reclaimed": count}))
             return
 
+        if method == "worker.start":
+            worker = self._job_worker()
+            self._emit(success_response(request.id, worker.start()))
+            return
+
+        if method == "worker.status":
+            self._emit(success_response(request.id, self._job_worker().status()))
+            return
+
+        if method == "worker.tick":
+            import asyncio
+            n = await self._job_worker().tick()
+            self._emit(success_response(request.id, {"processed": n}))
+            return
+
+        if method == "worker.stop":
+            self._emit(success_response(request.id, self._job_worker().stop()))
+            return
+
         self._emit(
             error_response(
                 request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
             )
         )
+
+
+    def _job_worker(self):
+        from .adapters.worker import JobWorker
+        if not hasattr(self, "_worker_instance") or self._worker_instance is None:
+            queue = JobQueue(self._workspace.require_project_db())
+            self._worker_instance = JobWorker(queue, emit=self._emit)
+            # default handlers as no-ops for demo kinds
+            self._worker_instance.register(
+                "media.noop", lambda payload: None
+            )
+        return self._worker_instance
 
     def _project_root(self) -> Path | None:
         current = self._workspace.current

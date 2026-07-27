@@ -28,6 +28,7 @@
 - **M2 确认门**：`story_package` 与 `identity_and_locations`；确认后目标修订集合哈希变化则自动失效；`trial.bootstrap` 一键搭试验项目并确认。
 - **M3 分镜生产线**：AWAP 能力目录/探测/路由/预算门禁；资产库；分镜 18–30 镜头；生产项指纹与 stale 传播；QC 审核队列；分镜确认门。
 - **M4 后期交付**：声音授权 + mock TTS/口型；字幕 ASS；音乐待确认库；非破坏时间线；混音计划；FFmpeg/代理渲染；粗剪确认门；封面；母版/抖音/红果导出；`trial.bootstrap_pipeline` 端到端。
+- **生产级媒体路径**：`adapters/` 接入 Grok 图 / FFmpeg Ken Burns 成片 / macOS `say` TTS / yt-dlp 或合成 BGM；默认真跑，`WORKFLOW_ALLOW_MOCK=1` 才允许 mock 冒充；`worker.*` 任务 worker。
 - **M5 连续生产验收**：试播集端到端导出；连续 5 集一致性/连续性/局部返工/失败隔离；20 集产能指标与 `pass` / `conditional_pass` / `fail` 分级；报告写入 `reports/m5_acceptance.{json,md}`；人工艺术评价仅清单不自动打分。
 
 项目 RPC：`project.create` / `open` / `close` / `current` / `list_recent` / `overview`。  

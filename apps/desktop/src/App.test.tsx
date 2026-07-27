@@ -565,6 +565,58 @@ describe("M1 shell", () => {
     );
   });
 
+
+  it("refreshes production workspace capabilities and counts", async () => {
+    const api = createApi({
+      request: vi.fn().mockImplementation(async (method: string) => {
+        if (method === "project.current") {
+          return {
+            project: {
+              id: "p1",
+              name: "试播项目",
+              root_path: "/tmp/demo",
+              schema_version: 16,
+            },
+          };
+        }
+        if (method === "project.list_recent") return { projects: [] };
+        if (method === "job.list") return { jobs: [] };
+        if (method === "project.overview") return emptyOverview;
+        if (method === "awap.probe") {
+          return {
+            probes: [
+              { capability: "ffmpeg.transcode", status: "ready" },
+              { capability: "tts.synthesize", status: "ready" },
+            ],
+          };
+        }
+        if (method === "storyboard.list") {
+          return { storyboards: [{ id: "sb1" }] };
+        }
+        if (method === "storyboard.get") {
+          return {
+            shots: [{ id: "s1" }, { id: "s2" }],
+            current_revision: { id: "rev1" },
+          };
+        }
+        if (method === "production.list") {
+          return { items: [{ id: "i1" }] };
+        }
+        if (method === "qc.list_reviews") {
+          return { reviews: [{ id: "r1" }] };
+        }
+        return { status: "ok" };
+      }),
+    });
+    const user = userEvent.setup();
+    render(<App api={api} showDiagnostics />);
+    await user.click(await screen.findByRole("button", { name: "生产交付" }));
+    await user.click(await screen.findByRole("button", { name: "刷新生产工作区" }));
+    expect(await screen.findByLabelText("生产工作区统计")).toHaveTextContent("镜头 2");
+    expect(screen.getByLabelText("能力矩阵")).toHaveTextContent("ffmpeg.transcode");
+    expect(screen.getByLabelText("能力矩阵")).toHaveTextContent("ready");
+  });
+
   it("runs M5 continuous acceptance and shows grade", async () => {
     const api = createApi({
       request: vi.fn().mockImplementation(async (method: string) => {

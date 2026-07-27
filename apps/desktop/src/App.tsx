@@ -233,6 +233,13 @@ export function App({
     reportJson?: string;
     reportMd?: string;
   } | null>(null);
+  const [productionWorkspace, setProductionWorkspace] = useState<{
+    shotCount: number;
+    itemCount: number;
+    openReviews: number;
+    capabilities: { capability: string; status: string }[];
+  } | null>(null);
+
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -828,6 +835,64 @@ export function App({
       setNotice({
         tone: "success",
         text: `M2–M4 流水线完成 · shots=${String(pipe.shot_count)} · items=${String(pipe.production_items)} · export=${String(pipe.ready_for_export)} · profiles=${exports.join(",")}`,
+      });
+      setView("production");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+
+  const loadProductionWorkspace = async () => {
+    setBusy("production-workspace");
+    try {
+      const probe = await api.request("awap.probe", {}, requestId("awap-probe"));
+      const probes = (probe.probes as Array<Record<string, unknown>> | undefined) ?? [];
+      const boards = await api.request("storyboard.list", {}, requestId("sb-list"));
+      const storyboards = (boards.storyboards as Array<Record<string, unknown>> | undefined) ?? [];
+      let shotCount = 0;
+      let itemCount = 0;
+      if (storyboards[0]?.id) {
+        const detail = await api.request(
+          "storyboard.get",
+          { storyboard_id: String(storyboards[0].id) },
+          requestId("sb-get"),
+        );
+        const shots = (detail.shots as unknown[] | undefined) ?? [];
+        shotCount = shots.length;
+        const revId =
+          (detail.current_revision as { id?: string } | undefined)?.id ??
+          (detail.storyboard as { current_revision?: { id?: string } } | undefined)
+            ?.current_revision?.id;
+        if (revId) {
+          const items = await api.request(
+            "production.list",
+            { storyboard_revision_id: String(revId) },
+            requestId("prod-list"),
+          );
+          itemCount = ((items.items as unknown[] | undefined) ?? []).length;
+        }
+      }
+      const reviews = await api.request(
+        "qc.list_reviews",
+        { open_only: true },
+        requestId("qc-list"),
+      );
+      const openReviews = ((reviews.reviews as unknown[] | undefined) ?? []).length;
+      setProductionWorkspace({
+        shotCount,
+        itemCount,
+        openReviews,
+        capabilities: probes.slice(0, 12).map((p) => ({
+          capability: String(p.capability ?? p.name ?? "?"),
+          status: String(p.status ?? "unknown"),
+        })),
+      });
+      setNotice({
+        tone: "success",
+        text: `生产工作区 · shots=${shotCount} items=${itemCount} open_reviews=${openReviews} caps=${probes.length}`,
       });
       setView("production");
     } catch (error) {
@@ -1916,7 +1981,7 @@ export function App({
         <div className="brand-lockup">
           <span className="brand-mark" aria-hidden="true">帧</span>
           <div>
-            <p className="eyebrow">AI VIDEO WORKFLOW / M1</p>
+            <p className="eyebrow">AI VIDEO WORKFLOW / M5</p>
             <h1>工作流核心台</h1>
           </div>
         </div>
@@ -2346,7 +2411,41 @@ export function App({
                     <small>storyboard · batch · timeline · export</small>
                   </span>
                 </button>
+                <button
+                  aria-label="刷新生产工作区"
+                  className="action"
+                  onClick={() => void loadProductionWorkspace()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">P2</span>
+                  <span>
+                    <strong>刷新生产工作区</strong>
+                    <small>awap · shots · items · reviews</small>
+                  </span>
+                </button>
               </div>
+              {productionWorkspace ? (
+                <div className="overview-columns">
+                  <div>
+                    <h4>分镜/生产</h4>
+                    <ul className="job-list" aria-label="生产工作区统计">
+                      <li>镜头 {productionWorkspace.shotCount}</li>
+                      <li>生产项 {productionWorkspace.itemCount}</li>
+                      <li>待审 {productionWorkspace.openReviews}</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h4>能力矩阵</h4>
+                    <ul className="job-list" aria-label="能力矩阵">
+                      {productionWorkspace.capabilities.map((c) => (
+                        <li key={c.capability}>
+                          <code>{c.status}</code> {c.capability}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              ) : null}
               {!pipelineSummary ? (
                 <p className="empty-hint">尚未运行生产流水线。</p>
               ) : (

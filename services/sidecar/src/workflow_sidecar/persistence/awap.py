@@ -265,13 +265,28 @@ class AwapService:
                 }
             return "degraded", {"reason": "CLI missing; mock available"}
         if capability == "tts.synthesize":
-            return "degraded", {"reason": "CosyVoice3 optional; mock TTS available"}
+            if shutil.which("say") and shutil.which("ffmpeg"):
+                return "ready", {
+                    "backend": "macos_say",
+                    "fallback_note": "CosyVoice3 optional; using say+ffmpeg",
+                }
+            return "degraded", {"reason": "TTS backend missing; mock only if ALLOW_MOCK"}
         if capability == "lipsync.apply":
-            return "degraded", {"reason": "MuseTalk optional; mock lipsync available"}
+            if shutil.which("ffmpeg"):
+                return "ready", {
+                    "backend": "simplified_mux",
+                    "note": "MuseTalk optional; still+audio simplified lipsync",
+                }
+            return "degraded", {"reason": "MuseTalk/ffmpeg missing"}
         if capability == "music.download":
             path = shutil.which("music-downloader") or shutil.which("yt-dlp")
             if path:
                 return "ready", {"binary": path}
+            if shutil.which("ffmpeg"):
+                return "ready", {
+                    "backend": "ffmpeg_sine_bed",
+                    "note": "yt-dlp optional; synthetic bed when no URL",
+                }
             return "degraded", {"fallback": "mock"}
         return "unknown", {"cost_class": cost_class}
 

@@ -94,16 +94,112 @@ class ProductionService:
             raise ValueError("production item is locked")
         if item["status"] == "succeeded" and not item["stale"]:
             return item
-        # Mock media output into assets
+        from ..adapters.ffmpeg_pipeline import (
+            static_motion_from_image,
+            write_placeholder_jpeg,
+        )
+        from ..adapters.grok_media import generate_image
+        from ..adapters.policy import allow_mock
+
         kind = item["kind"]
-        asset_type = "image" if kind == "image" else ("video" if kind == "video" else "audio")
-        payload = f"mock-{kind}-{item_id[:8]}".encode("utf-8")
+        params = item.get("params") or {}
+        if isinstance(params, str):
+            params = json.loads(params)
+        srev = self._storyboards.get_shot_revision(item["shot_revision_id"])
+        prompt = (
+            params.get("prompt")
+            or srev.get("action")
+            or srev.get("visual_prompt")
+            or f"cinematic shot {item['shot_revision_id'][:8]}"
+        )
+        staging = self._root / "staging" / "production" / item_id[:8]
+        staging.mkdir(parents=True, exist_ok=True)
+        media_meta: dict[str, Any] = {}
+        rel: str
+        mime: str
+        asset_type: str
+        adapter_name = item["adapter_id"] or "mock"
+
+        if kind == "image":
+            dest = staging / "still.jpg"
+            # Prefer Grok when available; placeholder JPEG otherwise (ffmpeg color or mock)
+            result = generate_image(dest, prompt=str(prompt))
+            if not result.ok or not result.output_path or not result.output_path.is_file():
+                if allow_mock():
+                    result = write_placeholder_jpeg(dest)
+                else:
+                    raise RuntimeError(result.error or "image generation failed")
+            rel = f"assets/images/{item_id[:8]}_still.jpg"
+            out = self._root / rel
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(result.output_path.read_bytes())
+            mime = result.mime_type or "image/jpeg"
+            asset_type = "image"
+            adapter_name = result.adapter
+            media_meta = result.to_dict()
+        elif kind == "video":
+            still_dest = staging / "source.jpg"
+            # Ensure a still exists first
+            still = generate_image(still_dest, prompt=str(prompt))
+            if not still.ok or not still.output_path or not still.output_path.is_file():
+                still = write_placeholder_jpeg(still_dest)
+            mode = srev.get("generation_mode") or "static_motion"
+            media_meta["generation_mode"] = mode
+            if mode == "image_to_video":
+                # Grok video often blocked (ZDR); degrade to static motion
+                media_meta["degraded_from"] = "image_to_video"
+            dest = staging / "motion.mp4"
+            duration = float(params.get("duration_sec") or 2.0)
+            result = static_motion_from_image(
+                still.output_path or still_dest, dest, duration_sec=duration
+            )
+            if not result.ok or not result.output_path or not result.output_path.is_file():
+                if allow_mock():
+                    from ..adapters.base import MediaResult
+
+                    dest.write_bytes(b"mock-video")
+                    result = MediaResult(
+                        ok=True,
+                        adapter="mock",
+                        output_path=dest,
+                        mime_type="video/mp4",
+                        mock=True,
+                        degraded=True,
+                    )
+                else:
+                    raise RuntimeError(result.error or "video generation failed")
+            rel = f"assets/videos/{item_id[:8]}_motion.mp4"
+            out = self._root / rel
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(result.output_path.read_bytes())
+            mime = "video/mp4"
+            asset_type = "video"
+            adapter_name = result.adapter
+            media_meta.update(result.to_dict())
+        else:
+            # audio production item — short sine/mock
+            from ..adapters.music_ytdlp import download_audio
+
+            dest = staging / "audio.wav"
+            result = download_audio(dest, title=f"shot-audio-{item_id[:8]}")
+            if not result.ok or not result.output_path:
+                raise RuntimeError(result.error or "audio generation failed")
+            rel = f"assets/audio/{item_id[:8]}_audio{result.output_path.suffix or '.wav'}"
+            out = self._root / rel
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(result.output_path.read_bytes())
+            mime = result.mime_type or "audio/wav"
+            asset_type = "audio"
+            adapter_name = result.adapter
+            media_meta = result.to_dict()
+
         asset = self._assets.create_asset(
             title=f"{kind} for {item['shot_revision_id'][:8]}",
             asset_type=asset_type,
             role=f"shot_{kind}",
-            bytes_data=payload,
-            mime_type="application/octet-stream",
+            relative_path=rel,
+            bytes_data=(self._root / rel).read_bytes(),
+            mime_type=mime,
             license_status="confirmed_by_user",
         )
         now = utc_now()
@@ -118,23 +214,23 @@ class ProductionService:
             (
                 manifest_id,
                 item_id,
-                item["adapter_id"] or "mock",
-                item["params_json"] if isinstance(item.get("params_json"), str) else _stable_json(item.get("params") or {}),
-                _stable_json({"shot_revision_id": item["shot_revision_id"]}),
-                _stable_json({"asset_id": asset["id"]}),
+                adapter_name,
+                _stable_json(params),
+                _stable_json({"shot_revision_id": item["shot_revision_id"], "prompt": prompt}),
+                _stable_json({"asset_id": asset["id"], "media": media_meta}),
                 now,
             ),
         )
         self._db.execute(
             """
             UPDATE production_items
-            SET status = 'succeeded', output_asset_id = ?, stale = 0, updated_at = ?
+            SET status = 'succeeded', output_asset_id = ?, stale = 0,
+                adapter_id = ?, updated_at = ?
             WHERE id = ?
             """,
-            (asset["id"], now, item_id),
+            (asset["id"], adapter_name, now, item_id),
         )
         self._db.commit()
-        # QC sample rule
         self._maybe_qc(item_id, asset)
         return self.get_item(item_id)
 
@@ -311,7 +407,8 @@ class ProductionService:
         finding_id = str(uuid.uuid4())
         now = utc_now()
         size = asset["files"][0]["byte_size"] if asset.get("files") else 0
-        if size < 32:
+        # Placeholder / mock outputs need human ack before master.
+        if size < 4096:
             self._db.execute(
                 """
                 INSERT INTO qc_findings(

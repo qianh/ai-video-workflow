@@ -87,17 +87,24 @@ class PostProductionService:
             if row is None or row["status"] != "confirmed":
                 raise ValueError("voice authorization missing or not confirmed")
         self._awap.route(capability="tts.synthesize")
-        # mock wav bytes
+        from ..adapters.tts_mac import synthesize_speech
+
+        utt_id = str(uuid.uuid4())
+        rel = f"assets/audio/tts_{utt_id[:8]}.wav"
+        dest = self._root / rel
+        result = synthesize_speech(dest, text=text)
+        if not result.ok or not result.output_path or not result.output_path.is_file():
+            raise RuntimeError(result.error or "TTS synthesis failed")
         asset = self._assets.create_asset(
             title=f"tts:{text[:24]}",
             asset_type="audio",
             role="dialogue_tts",
-            bytes_data=b"RIFF....WAVEmock" + text.encode("utf-8")[:200],
-            mime_type="audio/wav",
+            relative_path=rel,
+            bytes_data=result.output_path.read_bytes(),
+            mime_type=result.mime_type or "audio/wav",
             license_status="confirmed_by_user",
         )
-        utt_id = str(uuid.uuid4())
-        duration = max(800, min(8000, len(text) * 80))
+        duration = result.duration_ms or max(800, min(8000, len(text) * 80))
         now = utc_now()
         self._db.execute(
             """
@@ -144,12 +151,35 @@ class PostProductionService:
         if level == "none":
             return {"status": "skipped", "level": "none"}
         self._awap.route(capability="lipsync.apply")
+        from ..adapters.ffmpeg_pipeline import mux_still_with_audio
+
         job_id = str(uuid.uuid4())
+        # resolve TTS audio file if present
+        utt = self._db.fetchone(
+            "SELECT * FROM tts_utterances WHERE id = ?", (tts_utterance_id,)
+        )
+        audio_path = None
+        duration_sec = 2.0
+        if utt and utt["asset_id"]:
+            asset_row = self._assets.get_asset(utt["asset_id"])
+            files = asset_row.get("files") or []
+            if files:
+                audio_path = self._root / files[0]["relative_path"]
+            duration_sec = max(1.0, min(12.0, int(utt["duration_ms"] or 2000) / 1000))
+        rel = f"assets/videos/lipsync_{job_id[:8]}.mp4"
+        dest = self._root / rel
+        # simplified path (MuseTalk not installed): still + audio mux
+        if level == "precise":
+            level = "simplified"
+        result = mux_still_with_audio(None, audio_path, dest, duration_sec=duration_sec)
+        if not result.ok or not result.output_path:
+            raise RuntimeError(result.error or "lipsync failed")
         asset = self._assets.create_asset(
             title=f"lipsync-{shot_revision_id[:8]}",
             asset_type="video",
             role="lipsync",
-            bytes_data=b"mock-lipsync",
+            relative_path=rel,
+            bytes_data=result.output_path.read_bytes(),
             mime_type="video/mp4",
             license_status="confirmed_by_user",
         )
@@ -169,6 +199,8 @@ class PostProductionService:
             "level": level,
             "status": "succeeded",
             "output_asset_id": asset["id"],
+            "degraded": True,
+            "adapter": result.adapter,
         }
 
     # --- captions ---
@@ -312,20 +344,36 @@ class PostProductionService:
         url: str | None = None,
     ) -> dict[str, Any]:
         self._awap.route(capability="music.download")
+        from ..adapters.music_ytdlp import download_audio
+
+        music_id = str(uuid.uuid4())
+        rel = f"assets/audio/music_{music_id[:8]}.wav"
+        dest = self._root / rel
+        result = download_audio(dest, url=url, title=title)
+        if not result.ok or not result.output_path or not result.output_path.is_file():
+            raise RuntimeError(result.error or "music import failed")
+        # normalize path if adapter wrote different suffix
+        if result.output_path != dest and result.output_path.is_file():
+            rel = f"assets/audio/music_{music_id[:8]}{result.output_path.suffix}"
+            dest = self._root / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(result.output_path.read_bytes())
         asset = self._assets.create_asset(
             title=title,
             asset_type="audio",
             role=kind,
-            bytes_data=f"mock-music:{title}".encode("utf-8"),
-            mime_type="audio/mpeg",
+            relative_path=rel,
+            bytes_data=dest.read_bytes(),
+            mime_type=result.mime_type or "audio/wav",
             license_status="pending",
         )
+        platform = "yt-dlp" if result.adapter == "yt-dlp" else result.adapter
         source = self._assets.add_source_record(
             asset_id=asset["id"],
-            url=url or f"mock://music/{title}",
-            platform="mock",
+            url=url or f"generated://music/{title}",
+            platform=platform,
             title=title,
-            tool="music-downloader",
+            tool=result.adapter,
         )
         item_id = str(uuid.uuid4())
         now = utc_now()
@@ -681,34 +729,42 @@ class PostProductionService:
         rel = f"renders/{kind}/{timeline_revision_id[:8]}_{kind}.mp4"
         dest = self._root / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
-        # Prefer real ffmpeg color source if available; else mock file.
-        # force_mock keeps multi-episode acceptance fast.
         import os
+        from ..adapters.ffmpeg_pipeline import render_timeline_media
+        from ..adapters.policy import allow_mock
 
-        ffmpeg = None if force_mock or os.environ.get("WORKFLOW_ACCEPTANCE_FAST") else shutil.which("ffmpeg")
-        if ffmpeg:
-            duration_s = max(1, min(2, int(rev["duration_ms"] / 1000) or 1))
-            cmd = [
-                ffmpeg,
-                "-y",
-                "-f",
-                "lavfi",
-                "-i",
-                f"color=c=black:s=1080x1920:d={duration_s}",
-                "-f",
-                "lavfi",
-                "-i",
-                f"anullsrc=r=48000:cl=stereo:d={duration_s}",
-                "-c:v",
-                "libx264",
-                "-pix_fmt",
-                "yuv420p",
-                "-c:a",
-                "aac",
-                "-shortest",
-                str(dest),
-            ]
-            subprocess.run(cmd, capture_output=True, check=False)
+        # Collect stills / voice / music from project assets for real compile
+        stills: list[Path] = []
+        for p in sorted((self._root / "assets" / "images").glob("*"))[:6]:
+            if p.is_file():
+                stills.append(p)
+        voice = None
+        for p in sorted((self._root / "assets" / "audio").glob("tts_*.wav"))[:1]:
+            voice = p
+        music = None
+        for p in sorted((self._root / "assets" / "audio").glob("music_*"))[:1]:
+            music = p
+        ass_path = None
+        for p in sorted((self._root / "assets" / "subtitles").glob("*.ass"))[:1]:
+            ass_path = p
+        duration_s = max(1.0, min(8.0, (int(rev["duration_ms"] or 3000) / 1000) or 3.0))
+        if force_mock or os.environ.get("WORKFLOW_ACCEPTANCE_FAST"):
+            # keep M5/CI fast
+            dest.write_bytes(b"mock-render-" + kind.encode("utf-8"))
+        else:
+            result = render_timeline_media(
+                dest,
+                stills=stills,
+                voice=voice,
+                music=music,
+                ass_path=ass_path,
+                duration_sec=duration_s,
+                kind=kind,
+            )
+            if (not result.ok or not dest.is_file()) and allow_mock():
+                dest.write_bytes(b"mock-render-" + kind.encode("utf-8"))
+            elif not result.ok or not dest.is_file():
+                raise RuntimeError(result.error or "render_timeline failed")
         if not dest.is_file():
             dest.write_bytes(b"mock-render-" + kind.encode("utf-8"))
         job_id = str(uuid.uuid4())
@@ -815,13 +871,17 @@ class PostProductionService:
         rel = f"exports/{profile}/{episode_id[:8]}_{profile}.mp4"
         dest = self._root / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
+        from ..adapters.ffmpeg_pipeline import export_profile_copy
+
         if timeline_revision_id:
             rough = self.render_timeline(
                 timeline_revision_id, kind="master", force_mock=force_mock
             )
             src = self._root / rough["output_relative_path"]
             if src.is_file():
-                shutil.copy2(src, dest)
+                result = export_profile_copy(src, dest, profile=profile)
+                if not result.ok and not dest.is_file():
+                    shutil.copy2(src, dest)
         if not dest.is_file():
             dest.write_bytes(f"export-{profile}".encode("utf-8"))
         checklist = [
