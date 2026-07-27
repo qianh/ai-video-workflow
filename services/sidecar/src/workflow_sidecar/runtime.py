@@ -24,6 +24,7 @@ from .persistence.paths import file_sha256, resolve_project_path, to_project_rel
 from .persistence.characters import CharacterService
 from .persistence.continuity import ContinuityService
 from .persistence.creative_packs import CreativePackService
+from .persistence.director import DirectorService
 from .persistence.drafts import DraftService
 from .persistence.episode_scripts import EpisodeScriptService
 from .persistence.generation import GenerationService
@@ -237,6 +238,12 @@ class SidecarRuntime:
             await self._execute_continuity(request)
             return
 
+        if request.method.startswith("visual.") or request.method.startswith(
+            "director."
+        ):
+            await self._execute_director(request)
+            return
+
         if request.method.startswith("job."):
             await self._execute_job(request)
             return
@@ -328,6 +335,10 @@ class SidecarRuntime:
     def _continuity(self) -> ContinuityService:
         self._workspace.require_project_db()
         return ContinuityService(self._workspace.require_project_db())
+
+    def _director(self) -> DirectorService:
+        self._workspace.require_project_db()
+        return DirectorService(self._workspace.require_project_db())
 
     def _resolve_branch_id(self, params: dict[str, Any]) -> str:
         branch_id = params.get("branch_id")
@@ -508,6 +519,167 @@ class SidecarRuntime:
                 raise ValueError("limit must be an integer")
             result = svc.list_package_revisions(limit=limit)
             self._emit(success_response(request.id, {"revisions": result}))
+            return
+
+        self._emit(
+            error_response(
+                request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
+            )
+        )
+
+    async def _execute_director(self, request: Request) -> None:
+        svc = self._director()
+        method = request.method
+        params = request.params
+
+        if method == "visual.create":
+            name = params.get("name")
+            style_name = params.get("style_name")
+            if not isinstance(name, str) or not isinstance(style_name, str):
+                raise ValueError("name and style_name must be strings")
+            result = svc.create_visual_bible(
+                branch_id=self._resolve_branch_id(params),
+                name=name,
+                style_name=style_name,
+                payload=params.get("payload"),
+                locked_fields=params.get("locked_fields"),
+                scope_level=params.get("scope_level", "project"),
+                scope_ref=params.get("scope_ref"),
+                parent_revision_id=params.get("parent_revision_id"),
+                notes=params.get("notes"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "visual.add_revision":
+            bible_id = params.get("bible_id")
+            scope_level = params.get("scope_level")
+            if not isinstance(bible_id, str) or not isinstance(scope_level, str):
+                raise ValueError("bible_id and scope_level must be strings")
+            result = svc.add_visual_revision(
+                bible_id=bible_id,
+                scope_level=scope_level,
+                scope_ref=params.get("scope_ref"),
+                style_name=params.get("style_name"),
+                payload=params.get("payload"),
+                locked_fields=params.get("locked_fields"),
+                parent_revision_id=params.get("parent_revision_id"),
+                notes=params.get("notes"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "visual.approve":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            self._emit(
+                success_response(
+                    request.id, svc.approve_visual_revision(revision_id)
+                )
+            )
+            return
+
+        if method == "visual.resolve":
+            bible_id = params.get("bible_id")
+            if not isinstance(bible_id, str):
+                raise ValueError("bible_id must be a string")
+            result = svc.resolve_visual(
+                bible_id=bible_id,
+                episode_ref=params.get("episode_ref"),
+                shot_ref=params.get("shot_ref"),
+                approved_only=bool(params.get("approved_only", True)),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "visual.list":
+            limit = params.get("limit", 50)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            result = svc.list_visual_bibles(
+                branch_id=self._resolve_branch_id(params), limit=limit
+            )
+            self._emit(success_response(request.id, {"visual_bibles": result}))
+            return
+
+        if method == "director.create":
+            name = params.get("name")
+            payload = params.get("payload")
+            if not isinstance(name, str):
+                raise ValueError("name must be a string")
+            if not isinstance(payload, dict):
+                raise ValueError("payload must be an object")
+            result = svc.create_director_preset(
+                branch_id=self._resolve_branch_id(params),
+                name=name,
+                payload=payload,
+                locked_fields=params.get("locked_fields"),
+                scope_level=params.get("scope_level", "project"),
+                scope_ref=params.get("scope_ref"),
+                parent_revision_id=params.get("parent_revision_id"),
+                notes=params.get("notes"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "director.add_revision":
+            preset_id = params.get("preset_id")
+            scope_level = params.get("scope_level")
+            payload = params.get("payload")
+            if not isinstance(preset_id, str) or not isinstance(scope_level, str):
+                raise ValueError("preset_id and scope_level must be strings")
+            if not isinstance(payload, dict):
+                raise ValueError("payload must be an object")
+            result = svc.add_director_revision(
+                preset_id=preset_id,
+                scope_level=scope_level,
+                scope_ref=params.get("scope_ref"),
+                payload=payload,
+                locked_fields=params.get("locked_fields"),
+                parent_revision_id=params.get("parent_revision_id"),
+                notes=params.get("notes"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "director.approve":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            self._emit(
+                success_response(
+                    request.id, svc.approve_director_revision(revision_id)
+                )
+            )
+            return
+
+        if method == "director.resolve":
+            preset_id = params.get("preset_id")
+            if not isinstance(preset_id, str):
+                raise ValueError("preset_id must be a string")
+            result = svc.resolve_director(
+                preset_id=preset_id,
+                episode_ref=params.get("episode_ref"),
+                shot_ref=params.get("shot_ref"),
+                approved_only=bool(params.get("approved_only", True)),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "director.list":
+            limit = params.get("limit", 50)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            result = svc.list_director_presets(
+                branch_id=self._resolve_branch_id(params), limit=limit
+            )
+            self._emit(success_response(request.id, {"director_presets": result}))
+            return
+
+        if method == "director.overview":
+            result = svc.overview(self._resolve_branch_id(params))
+            self._emit(success_response(request.id, result))
             return
 
         self._emit(

@@ -506,6 +506,86 @@ describe("M1 shell", () => {
     );
   });
 
+  it("builds visual bible and director preset three-level resolve", async () => {
+    const api = createApi({
+      request: vi.fn().mockImplementation(async (method: string) => {
+        if (method === "project.current") {
+          return {
+            project: {
+              id: "p1",
+              name: "试播项目",
+              root_path: "/tmp/demo",
+              schema_version: 13,
+            },
+          };
+        }
+        if (method === "project.list_recent") return { projects: [] };
+        if (method === "job.list") return { jobs: [] };
+        if (method === "project.overview") return emptyOverview;
+        if (method === "visual.create") {
+          return {
+            id: "bible-1",
+            current_revision: { id: "vb-1", style_name: "现代国漫半写实" },
+          };
+        }
+        if (method === "visual.add_revision") {
+          return { id: "vb-child", scope_level: "episode" };
+        }
+        if (method === "visual.approve") {
+          return { id: "bible-1", approved_revision: { status: "approved" } };
+        }
+        if (method === "visual.resolve") {
+          return {
+            effective: {
+              style_name: "现代国漫半写实",
+              lighting: "silhouette",
+              palette: { primary: "cold teal", accent: "neon magenta" },
+            },
+            locked_fields: ["style_name", "forbidden"],
+            layers: [
+              { scope_level: "project" },
+              { scope_level: "episode" },
+              { scope_level: "shot" },
+            ],
+          };
+        }
+        if (method === "director.create") {
+          return {
+            id: "preset-1",
+            current_revision: { id: "dp-1" },
+          };
+        }
+        if (method === "director.add_revision") {
+          return { id: "dp-ep" };
+        }
+        if (method === "director.approve") {
+          return { id: "preset-1", approved_revision: { status: "approved" } };
+        }
+        if (method === "director.resolve") {
+          return {
+            effective: {
+              motion_intensity: "medium",
+              forbidden_moves: ["whip pan"],
+            },
+          };
+        }
+        return { status: "ok" };
+      }),
+    });
+    const user = userEvent.setup();
+    render(<App api={api} showDiagnostics />);
+    await user.click(await screen.findByRole("button", { name: "导演栈" }));
+    await user.click(await screen.findByRole("button", { name: "构建并解析导演栈" }));
+    expect(await screen.findByText(/导演栈已解析/)).toBeInTheDocument();
+    expect(screen.getByLabelText("导演解析结果")).toHaveTextContent("现代国漫半写实");
+    expect(screen.getByLabelText("锁定字段列表")).toHaveTextContent("style_name");
+    expect(api.request).toHaveBeenCalledWith(
+      "visual.resolve",
+      expect.objectContaining({ episode_ref: "E01", shot_ref: "E01-S03" }),
+      expect.any(String),
+    );
+  });
+
   it("writes continuity ledger and creates an immutable snapshot", async () => {
     const api = createApi({
       request: vi.fn().mockImplementation(async (method: string) => {

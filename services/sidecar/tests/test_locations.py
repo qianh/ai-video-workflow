@@ -21,7 +21,7 @@ def test_location_pack_prop_spatial_flow(tmp_path: Path) -> None:
     parent = tmp_path / "projects"
     parent.mkdir()
     project = service.create_project(parent, "World")
-    assert project.schema_version >= 12
+    assert project.schema_version >= 13
 
     db = service.require_project_db()
     story = StoryService(db, Path(project.root_path))

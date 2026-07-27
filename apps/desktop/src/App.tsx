@@ -46,6 +46,7 @@ type ShellView =
   | "characters"
   | "world"
   | "continuity"
+  | "director"
   | "drafts"
   | "generation"
   | "jobs"
@@ -193,6 +194,13 @@ export function App({
     snapshotCount: number;
     sampleKeys: string[];
   } | null>(null);
+  const [directorSummary, setDirectorSummary] = useState<{
+    styleName: string;
+    lockedFields: string[];
+    effectiveKeys: string[];
+    motionIntensity: string;
+    layers: string[];
+  } | null>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -266,6 +274,7 @@ export function App({
       setCharacterSummary(null);
       setWorldSummary(null);
       setContinuitySummary(null);
+      setDirectorSummary(null);
     }
   }, [api]);
 
@@ -703,6 +712,155 @@ export function App({
       });
       await refreshPackState();
       setView("packs");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const buildDirectorStack = async () => {
+    setBusy("director-setup");
+    try {
+      const bible = await api.request(
+        "visual.create",
+        {
+          name: "试播视觉圣经",
+          style_name: "现代国漫半写实",
+          payload: {
+            character_proportion: "1:7",
+            line_work: "clean",
+            palette: { primary: "cold teal" },
+            forbidden: ["photoreal skin"],
+          },
+          locked_fields: ["style_name", "forbidden"],
+        },
+        requestId("visual-create"),
+      );
+      const bibleRev = String(
+        (bible.current_revision as { id?: string } | undefined)?.id ?? "",
+      );
+      await api.request(
+        "visual.approve",
+        { revision_id: bibleRev },
+        requestId("visual-approve"),
+      );
+      const epVisual = await api.request(
+        "visual.add_revision",
+        {
+          bible_id: String(bible.id),
+          scope_level: "episode",
+          scope_ref: "E01",
+          payload: {
+            style_name: "should-not-override",
+            palette: { accent: "neon magenta" },
+            lighting: "wet neon night",
+          },
+        },
+        requestId("visual-ep"),
+      );
+      await api.request(
+        "visual.approve",
+        { revision_id: String(epVisual.id) },
+        requestId("visual-ep-ok"),
+      );
+      const shotVisual = await api.request(
+        "visual.add_revision",
+        {
+          bible_id: String(bible.id),
+          scope_level: "shot",
+          scope_ref: "E01-S03",
+          payload: { lighting: "silhouette", camera_feel: "handheld" },
+        },
+        requestId("visual-shot"),
+      );
+      await api.request(
+        "visual.approve",
+        { revision_id: String(shotVisual.id) },
+        requestId("visual-shot-ok"),
+      );
+      const visualResolved = await api.request(
+        "visual.resolve",
+        {
+          bible_id: String(bible.id),
+          episode_ref: "E01",
+          shot_ref: "E01-S03",
+        },
+        requestId("visual-resolve"),
+      );
+      const preset = await api.request(
+        "director.create",
+        {
+          name: "竖屏悬疑预设",
+          payload: {
+            shot_duration_ms: { min: 1200, max: 3500 },
+            motion_intensity: "low",
+            forbidden_moves: ["whip pan"],
+          },
+          locked_fields: ["forbidden_moves"],
+        },
+        requestId("director-create"),
+      );
+      await api.request(
+        "director.approve",
+        {
+          revision_id: String(
+            (preset.current_revision as { id?: string } | undefined)?.id ?? "",
+          ),
+        },
+        requestId("director-approve"),
+      );
+      const epDir = await api.request(
+        "director.add_revision",
+        {
+          preset_id: String(preset.id),
+          scope_level: "episode",
+          scope_ref: "E01",
+          payload: {
+            forbidden_moves: ["ignored"],
+            motion_intensity: "medium",
+            transition_rate: "sparse",
+          },
+        },
+        requestId("director-ep"),
+      );
+      await api.request(
+        "director.approve",
+        { revision_id: String(epDir.id) },
+        requestId("director-ep-ok"),
+      );
+      const directorResolved = await api.request(
+        "director.resolve",
+        {
+          preset_id: String(preset.id),
+          episode_ref: "E01",
+          shot_ref: "E01-S03",
+        },
+        requestId("director-resolve"),
+      );
+      const effective =
+        (visualResolved.effective as Record<string, unknown> | undefined) ?? {};
+      const locked =
+        (visualResolved.locked_fields as string[] | undefined) ?? [];
+      const dirEff =
+        (directorResolved.effective as Record<string, unknown> | undefined) ??
+        {};
+      const layers =
+        ((visualResolved.layers as Array<{ scope_level?: string }> | undefined) ??
+          []
+        ).map((item) => String(item.scope_level ?? ""));
+      setDirectorSummary({
+        styleName: String(effective.style_name ?? ""),
+        lockedFields: locked,
+        effectiveKeys: Object.keys(effective),
+        motionIntensity: String(dirEff.motion_intensity ?? ""),
+        layers,
+      });
+      setNotice({
+        tone: "success",
+        text: `导演栈已解析 · style=${String(effective.style_name)} · lighting=${String(effective.lighting)} · motion=${String(dirEff.motion_intensity)} · locks=${locked.join(",")}`,
+      });
+      setView("director");
     } catch (error) {
       setNotice({ tone: "warning", text: errorMessage(error) });
     } finally {
@@ -1547,6 +1705,7 @@ export function App({
     { id: "characters", label: "角色声音" },
     { id: "world", label: "场景道具" },
     { id: "continuity", label: "状态账本" },
+    { id: "director", label: "导演栈" },
     { id: "drafts", label: "草稿修订" },
     { id: "generation", label: "生成流水线" },
     { id: "jobs", label: "任务中心" },
@@ -1959,6 +2118,80 @@ export function App({
                   ))}
                 </ul>
               )}
+            </>
+          )}
+        </section>
+      )}
+
+      {view === "director" && (
+        <section className="console-panel" aria-label="导演栈">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">VISUAL BIBLE · DIRECTOR PRESET</p>
+              <h3>视觉圣经与导演预设（三级继承）</h3>
+            </div>
+            <span className="panel-number">M2.13</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="构建并解析导演栈"
+                  className="action primary"
+                  onClick={() => void buildDirectorStack()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">D1</span>
+                  <span>
+                    <strong>构建并解析导演栈</strong>
+                    <small>project → episode → shot resolve</small>
+                  </span>
+                </button>
+              </div>
+              {!directorSummary ? (
+                <p className="empty-hint">尚未配置视觉圣经 / 导演预设。</p>
+              ) : (
+                <div className="overview-columns">
+                  <div>
+                    <h4>解析结果</h4>
+                    <ul className="job-list" aria-label="导演解析结果">
+                      <li>
+                        <code>style</code> {directorSummary.styleName}
+                      </li>
+                      <li>
+                        <code>motion</code> {directorSummary.motionIntensity}
+                      </li>
+                      <li>
+                        <code>layers</code> {directorSummary.layers.join(" → ")}
+                      </li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h4>锁定字段</h4>
+                    <ul className="job-list" aria-label="锁定字段列表">
+                      {directorSummary.lockedFields.map((field) => (
+                        <li key={field}>
+                          <code>lock</code> {field}
+                        </li>
+                      ))}
+                    </ul>
+                    <h4>有效键</h4>
+                    <ul className="job-list" aria-label="有效字段列表">
+                      {directorSummary.effectiveKeys.map((key) => (
+                        <li key={key}>
+                          <code>key</code> {key}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
+              <p className="empty-hint">
+                下级只保存差异；项目级 locked_fields 为硬约束，不可被 episode/shot
+                覆盖。
+              </p>
             </>
           )}
         </section>

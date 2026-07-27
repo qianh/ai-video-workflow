@@ -24,6 +24,7 @@
 - **身份包 / 定妆候选**：生成 look candidates（默认 mock，可选 Grok `image_gen`）；选择后 confirm 才过生产门禁；主角/反派必须确认。
 - **场景包 / 空间关系 / 道具**：核心场景布局+机位+昼夜；有向空间连接；关键道具锚点；核心场景包 confirm 门禁。
 - **时间化状态账本**：区间状态（outfit/injury/owner…）；同优先级重叠阻断；快照在无 blocker 时冻结有效状态。
+- **视觉圣经 / 导演预设**：project → episode → shot 三级继承；`locked_fields` 硬约束不可被下级覆盖；主版本变更产出影响报告。
 
 项目 RPC：`project.create` / `open` / `close` / `current` / `list_recent` / `overview`。  
 故事 RPC：`story.import_source` / `list_sources` / `split_chapters` / `list_chunks` / `create_event` / `list_events` / `create_edge` / `list_edges` / `list_branches` / `create_branch` / `fork_branch` / `set_primary` / `archive_branch`。  
@@ -42,6 +43,8 @@
 空间 RPC：`spatial.add_link` / `list`。  
 道具 RPC：`prop.create` / `list` / `approve`。  
 连续性 RPC：`continuity.add` / `end` / `supersede` / `get` / `list` / `effective` / `check` / `snapshot` / `list_snapshots` / `overview`。  
+视觉圣经 RPC：`visual.create` / `add_revision` / `approve` / `resolve` / `list`。  
+导演预设 RPC：`director.create` / `add_revision` / `approve` / `resolve` / `list` / `overview`。  
 任务 RPC：`job.enqueue` / `get` / `list` / `claim` / `complete` / `fail` / `cancel` / `pause` / `resume` / `reclaim_expired`。  
 环境 RPC：`env.summary`、`env.resolve`（必须传 `allow_keys`）。  
 快照 RPC：`snapshot.create`、`snapshot.list`。  

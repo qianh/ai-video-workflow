@@ -880,6 +880,86 @@ PROJECT_MIGRATIONS: list[Migration] = [
             ON continuity_snapshots(branch_id, at_time_ord);
         """,
     ),
+    (
+        13,
+        """
+        CREATE TABLE visual_bibles (
+            id TEXT PRIMARY KEY,
+            branch_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            status TEXT NOT NULL,
+            current_revision_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX idx_visual_bibles_branch ON visual_bibles(branch_id, status);
+
+        CREATE TABLE visual_bible_revisions (
+            id TEXT PRIMARY KEY,
+            bible_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            scope_level TEXT NOT NULL,
+            scope_ref TEXT,
+            status TEXT NOT NULL,
+            style_name TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            locked_fields_json TEXT NOT NULL DEFAULT '[]',
+            parent_revision_id TEXT,
+            content_hash TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(bible_id) REFERENCES visual_bibles(id),
+            FOREIGN KEY(parent_revision_id) REFERENCES visual_bible_revisions(id),
+            UNIQUE(bible_id, revision_no)
+        );
+
+        CREATE INDEX idx_visual_bible_revisions
+            ON visual_bible_revisions(bible_id, scope_level, scope_ref);
+
+        CREATE TABLE director_presets (
+            id TEXT PRIMARY KEY,
+            branch_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            status TEXT NOT NULL,
+            current_revision_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX idx_director_presets_branch ON director_presets(branch_id, status);
+
+        CREATE TABLE director_preset_revisions (
+            id TEXT PRIMARY KEY,
+            preset_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            scope_level TEXT NOT NULL,
+            scope_ref TEXT,
+            status TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            locked_fields_json TEXT NOT NULL DEFAULT '[]',
+            parent_revision_id TEXT,
+            content_hash TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(preset_id) REFERENCES director_presets(id),
+            FOREIGN KEY(parent_revision_id) REFERENCES director_preset_revisions(id),
+            UNIQUE(preset_id, revision_no)
+        );
+
+        CREATE INDEX idx_director_preset_revisions
+            ON director_preset_revisions(preset_id, scope_level, scope_ref);
+
+        CREATE TABLE inheritance_impact_reports (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            base_revision_id TEXT NOT NULL,
+            affected_revision_ids_json TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        """,
+    ),
 ]
 
 
