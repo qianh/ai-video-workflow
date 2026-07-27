@@ -22,6 +22,7 @@ from .persistence import (
 from .persistence.overview import build_project_overview
 from .persistence.paths import file_sha256, resolve_project_path, to_project_relative
 from .persistence.creative_packs import CreativePackService
+from .persistence.drafts import DraftService
 from .persistence.story import StoryService
 from .protocol import Request, error_response, event, success_response
 
@@ -181,6 +182,12 @@ class SidecarRuntime:
             await self._execute_pack(request)
             return
 
+        if request.method.startswith("draft.") or request.method.startswith(
+            "revision."
+        ):
+            await self._execute_draft(request)
+            return
+
         if request.method.startswith("job."):
             await self._execute_job(request)
             return
@@ -235,6 +242,122 @@ class SidecarRuntime:
     def _packs(self) -> CreativePackService:
         self._workspace.require_project_db()
         return CreativePackService(self._workspace.require_project_db())
+
+    def _drafts(self) -> DraftService:
+        self._workspace.require_project_db()
+        return DraftService(self._workspace.require_project_db())
+
+    async def _execute_draft(self, request: Request) -> None:
+        drafts = self._drafts()
+        method = request.method
+        params = request.params
+
+        if method == "draft.list_schemas":
+            self._emit(
+                success_response(request.id, {"schemas": drafts.list_schemas()})
+            )
+            return
+
+        if method == "draft.create":
+            schema_id = params.get("schema_id")
+            title = params.get("title")
+            payload = params.get("payload")
+            target_type = params.get("target_type", "generic")
+            target_id = params.get("target_id")
+            branch_id = params.get("branch_id")
+            if not isinstance(schema_id, str) or not isinstance(title, str):
+                raise ValueError("schema_id and title must be strings")
+            if not isinstance(payload, dict):
+                raise ValueError("payload must be an object")
+            if not isinstance(target_type, str):
+                raise ValueError("target_type must be a string")
+            if target_id is not None and not isinstance(target_id, str):
+                raise ValueError("target_id must be a string")
+            if branch_id is None:
+                # Default drafts to primary production branch.
+                branch_id = self._story().primary_branch_id()
+            elif not isinstance(branch_id, str):
+                raise ValueError("branch_id must be a string")
+            result = drafts.create(
+                schema_id=schema_id,
+                title=title,
+                payload=payload,
+                target_type=target_type,
+                target_id=target_id,
+                branch_id=branch_id,
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "draft.update":
+            draft_id = params.get("draft_id")
+            payload = params.get("payload")
+            title = params.get("title")
+            if not isinstance(draft_id, str):
+                raise ValueError("draft_id must be a string")
+            if payload is not None and not isinstance(payload, dict):
+                raise ValueError("payload must be an object")
+            if title is not None and not isinstance(title, str):
+                raise ValueError("title must be a string")
+            result = drafts.update(draft_id, payload=payload, title=title)
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "draft.validate":
+            draft_id = params.get("draft_id")
+            if not isinstance(draft_id, str):
+                raise ValueError("draft_id must be a string")
+            result = drafts.validate(draft_id)
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "draft.promote":
+            draft_id = params.get("draft_id")
+            if not isinstance(draft_id, str):
+                raise ValueError("draft_id must be a string")
+            primary = self._story().primary_branch_id()
+            result = drafts.promote(
+                draft_id,
+                require_primary_branch=True,
+                primary_branch_id=primary,
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "draft.get":
+            draft_id = params.get("draft_id")
+            if not isinstance(draft_id, str):
+                raise ValueError("draft_id must be a string")
+            self._emit(success_response(request.id, drafts.get(draft_id)))
+            return
+
+        if method == "draft.list":
+            status = params.get("status")
+            limit = params.get("limit", 50)
+            if status is not None and not isinstance(status, str):
+                raise ValueError("status must be a string")
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            result = drafts.list_drafts(status=status, limit=limit)
+            self._emit(success_response(request.id, {"drafts": result}))
+            return
+
+        if method == "revision.list":
+            target_type = params.get("target_type")
+            limit = params.get("limit", 50)
+            if target_type is not None and not isinstance(target_type, str):
+                raise ValueError("target_type must be a string")
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            result = drafts.list_revisions(target_type=target_type, limit=limit)
+            self._emit(success_response(request.id, {"revisions": result}))
+            return
+
+        self._emit(
+            error_response(
+                request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
+            )
+        )
 
     async def _execute_pack(self, request: Request) -> None:
         packs = self._packs()

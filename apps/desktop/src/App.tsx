@@ -36,7 +36,7 @@ type ProjectOverview = {
   snapshots: SnapshotInfo[];
   queue_depth: number;
 };
-type ShellView = "overview" | "project" | "story" | "packs" | "jobs" | "link";
+type ShellView = "overview" | "project" | "story" | "packs" | "drafts" | "jobs" | "link";
 type StorySourceInfo = {
   id: string;
   title: string;
@@ -122,6 +122,12 @@ export function App({
   const [branches, setBranches] = useState<
     { id: string; name: string; status: string; is_primary: boolean }[]
   >([]);
+  const [drafts, setDrafts] = useState<
+    { id: string; title: string; status: string; schema_id: string }[]
+  >([]);
+  const [revisions, setRevisions] = useState<
+    { id: string; title: string; revision_no: number; status: string }[]
+  >([]);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -184,8 +190,36 @@ export function App({
       setPackLock(null);
       setPackCompositions([]);
       setBranches([]);
+      setDrafts([]);
+      setRevisions([]);
     }
   }, [api]);
+
+  const refreshDraftState = useCallback(async () => {
+    if (!project) {
+      setDrafts([]);
+      setRevisions([]);
+      return;
+    }
+    const listed = await api.request("draft.list", { limit: 20 }, requestId("draft-list"));
+    setDrafts(
+      ((listed.drafts as Array<Record<string, unknown>> | undefined) ?? []).map((item) => ({
+        id: String(item.id ?? ""),
+        title: String(item.title ?? ""),
+        status: String(item.status ?? ""),
+        schema_id: String(item.schema_id ?? ""),
+      })),
+    );
+    const revs = await api.request("revision.list", { limit: 20 }, requestId("revision-list"));
+    setRevisions(
+      ((revs.revisions as Array<Record<string, unknown>> | undefined) ?? []).map((item) => ({
+        id: String(item.id ?? ""),
+        title: String(item.title ?? ""),
+        revision_no: Number(item.revision_no ?? 0),
+        status: String(item.status ?? ""),
+      })),
+    );
+  }, [api, project]);
 
   const refreshBranches = useCallback(async () => {
     if (!project) {
@@ -528,6 +562,45 @@ export function App({
     }
   };
 
+  const createValidatePromoteDraft = async () => {
+    setBusy("draft-flow");
+    try {
+      const created = await api.request(
+        "draft.create",
+        {
+          schema_id: "episode_outline_v1",
+          title: "E01 夜市开端",
+          target_type: "episode_outline",
+          target_id: "episode-1",
+          payload: {
+            episode_no: 1,
+            title: "夜市开端",
+            summary: "雨夜发现发光 U 盘",
+            hooks: ["发光 U 盘", "失踪消息"],
+          },
+        },
+        requestId("draft-create"),
+      );
+      const draftId = String(created.id);
+      await api.request("draft.validate", { draft_id: draftId }, requestId("draft-validate"));
+      const formal = await api.request(
+        "draft.promote",
+        { draft_id: draftId },
+        requestId("draft-promote"),
+      );
+      setNotice({
+        tone: "success",
+        text: `正式修订 r${String(formal.revision_no)} 已创建（经草稿+Schema 门禁）`,
+      });
+      await refreshDraftState();
+      setView("drafts");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const forkExploreBranch = async () => {
     setBusy("story-fork");
     try {
@@ -655,6 +728,7 @@ export function App({
     { id: "project", label: "项目" },
     { id: "story", label: "故事" },
     { id: "packs", label: "创作包" },
+    { id: "drafts", label: "草稿修订" },
     { id: "jobs", label: "任务中心" },
     { id: "link", label: "链路诊断" },
   ];
@@ -1065,6 +1139,83 @@ export function App({
                   ))}
                 </ul>
               )}
+            </>
+          )}
+        </section>
+      )}
+
+      {view === "drafts" && (
+        <section className="console-panel" aria-label="草稿修订">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">DRAFT GATE</p>
+              <h3>草稿与正式修订</h3>
+            </div>
+            <span className="panel-number">M2.05</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="创建并晋级样例草稿"
+                  className="action primary"
+                  onClick={() => void createValidatePromoteDraft()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">D1</span>
+                  <span>
+                    <strong>创建并晋级样例草稿</strong>
+                    <small>create → validate → promote</small>
+                  </span>
+                </button>
+                <button
+                  aria-label="刷新草稿"
+                  className="action"
+                  onClick={() => void refreshDraftState()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">D2</span>
+                  <span>
+                    <strong>刷新列表</strong>
+                    <small>drafts + formal revisions</small>
+                  </span>
+                </button>
+              </div>
+              <div className="overview-columns">
+                <div>
+                  <h4>草稿</h4>
+                  {drafts.length === 0 ? (
+                    <p className="empty-hint">暂无草稿</p>
+                  ) : (
+                    <ul className="job-list" aria-label="草稿列表">
+                      {drafts.map((draft) => (
+                        <li key={draft.id}>
+                          <code>{draft.status}</code> {draft.title} · {draft.schema_id}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div>
+                  <h4>正式修订</h4>
+                  {revisions.length === 0 ? (
+                    <p className="empty-hint">暂无正式修订</p>
+                  ) : (
+                    <ul className="job-list" aria-label="正式修订列表">
+                      {revisions.map((rev) => (
+                        <li key={rev.id}>
+                          <code>
+                            r{rev.revision_no}/{rev.status}
+                          </code>{" "}
+                          {rev.title}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
             </>
           )}
         </section>

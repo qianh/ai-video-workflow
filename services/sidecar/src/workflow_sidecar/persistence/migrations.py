@@ -241,6 +241,45 @@ PROJECT_MIGRATIONS: list[Migration] = [
         ALTER TABLE story_branches ADD COLUMN forked_from_revision_id TEXT;
         """,
     ),
+    (
+        5,
+        """
+        CREATE TABLE content_drafts (
+            id TEXT PRIMARY KEY,
+            target_type TEXT NOT NULL,
+            target_id TEXT,
+            branch_id TEXT,
+            schema_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            validation_errors_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX idx_content_drafts_status ON content_drafts(status, updated_at DESC);
+
+        CREATE TABLE formal_revisions (
+            id TEXT PRIMARY KEY,
+            draft_id TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id TEXT,
+            branch_id TEXT,
+            schema_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(draft_id) REFERENCES content_drafts(id),
+            UNIQUE(target_type, target_id, revision_no)
+        );
+
+        CREATE INDEX idx_formal_revisions_target ON formal_revisions(target_type, target_id, revision_no);
+        """,
+    ),
 ]
 
 
