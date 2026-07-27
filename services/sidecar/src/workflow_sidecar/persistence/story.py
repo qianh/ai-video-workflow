@@ -116,6 +116,240 @@ class StoryService:
     def primary_branch_id(self) -> str:
         return self._ensure_primary_branch()
 
+    def list_branches(self) -> list[dict[str, Any]]:
+        rows = self._db.fetchall(
+            """
+            SELECT * FROM story_branches
+            ORDER BY is_primary DESC, created_at ASC
+            """
+        )
+        return [_row_branch(row) for row in rows]
+
+    def get_branch(self, branch_id: str) -> dict[str, Any]:
+        row = self._db.fetchone(
+            "SELECT * FROM story_branches WHERE id = ?", (branch_id,)
+        )
+        if row is None:
+            raise ValueError(f"branch not found: {branch_id}")
+        return _row_branch(row)
+
+    def create_branch(
+        self,
+        *,
+        name: str,
+        status: str = "exploring",
+        parent_branch_id: str | None = None,
+    ) -> dict[str, Any]:
+        safe_name = name.strip()
+        if not safe_name:
+            raise ValueError("name must be a non-empty string")
+        if status not in {"exploring", "candidate", "primary", "archived"}:
+            raise ValueError(f"invalid branch status: {status}")
+        if status == "primary":
+            raise ValueError("use set_primary to promote a branch")
+        if parent_branch_id is not None:
+            self.get_branch(parent_branch_id)
+        branch_id = str(uuid.uuid4())
+        now = utc_now()
+        self._db.execute(
+            """
+            INSERT INTO story_branches(
+                id, name, parent_branch_id, is_primary, status,
+                created_at, updated_at, forked_from_revision_id
+            ) VALUES (?, ?, ?, 0, ?, ?, ?, NULL)
+            """,
+            (branch_id, safe_name, parent_branch_id, status, now, now),
+        )
+        self._db.commit()
+        return self.get_branch(branch_id)
+
+    def fork_branch(
+        self,
+        *,
+        from_branch_id: str,
+        name: str,
+    ) -> dict[str, Any]:
+        source = self.get_branch(from_branch_id)
+        if source["status"] == "archived":
+            raise ValueError("cannot fork an archived branch")
+        safe_name = name.strip()
+        if not safe_name:
+            raise ValueError("name must be a non-empty string")
+
+        # Latest active revision id from source branch, if any.
+        tip = self._db.fetchone(
+            """
+            SELECT id FROM narrative_event_revisions
+            WHERE branch_id = ? AND status = 'active'
+            ORDER BY order_key DESC, created_at DESC
+            LIMIT 1
+            """,
+            (from_branch_id,),
+        )
+        forked_from = tip["id"] if tip is not None else None
+        branch_id = str(uuid.uuid4())
+        now = utc_now()
+        event_map: dict[str, str] = {}
+
+        self._db.connection.execute("BEGIN IMMEDIATE")
+        try:
+            self._db.execute(
+                """
+                INSERT INTO story_branches(
+                    id, name, parent_branch_id, is_primary, status,
+                    created_at, updated_at, forked_from_revision_id
+                ) VALUES (?, ?, ?, 0, 'exploring', ?, ?, ?)
+                """,
+                (
+                    branch_id,
+                    safe_name,
+                    from_branch_id,
+                    now,
+                    now,
+                    forked_from,
+                ),
+            )
+            events = self._db.fetchall(
+                "SELECT * FROM narrative_events WHERE branch_id = ?",
+                (from_branch_id,),
+            )
+            for event in events:
+                new_event_id = str(uuid.uuid4())
+                event_map[str(event["id"])] = new_event_id
+                self._db.execute(
+                    """
+                    INSERT INTO narrative_events(id, branch_id, stable_key, created_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        new_event_id,
+                        branch_id,
+                        f"{event['stable_key']}-fork-{uuid.uuid4().hex[:6]}",
+                        now,
+                    ),
+                )
+                revisions = self._db.fetchall(
+                    """
+                    SELECT * FROM narrative_event_revisions
+                    WHERE event_id = ? AND status = 'active'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (event["id"],),
+                )
+                for rev in revisions:
+                    self._db.execute(
+                        """
+                        INSERT INTO narrative_event_revisions(
+                            id, event_id, branch_id, title, summary, order_key, story_time,
+                            origin, confidence, status, story_source_id, source_chunk_id,
+                            char_start, char_end, quote_hash, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            new_event_id,
+                            branch_id,
+                            rev["title"],
+                            rev["summary"],
+                            rev["order_key"],
+                            rev["story_time"],
+                            rev["origin"],
+                            rev["confidence"],
+                            rev["story_source_id"],
+                            rev["source_chunk_id"],
+                            rev["char_start"],
+                            rev["char_end"],
+                            rev["quote_hash"],
+                            now,
+                        ),
+                    )
+            edges = self._db.fetchall(
+                "SELECT * FROM narrative_event_edges WHERE branch_id = ?",
+                (from_branch_id,),
+            )
+            for edge in edges:
+                from_id = event_map.get(str(edge["from_event_id"]))
+                to_id = event_map.get(str(edge["to_event_id"]))
+                if not from_id or not to_id:
+                    continue
+                self._db.execute(
+                    """
+                    INSERT INTO narrative_event_edges(
+                        id, branch_id, from_event_id, to_event_id, relation, confidence, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        branch_id,
+                        from_id,
+                        to_id,
+                        edge["relation"],
+                        edge["confidence"],
+                        now,
+                    ),
+                )
+            self._db.connection.execute("COMMIT")
+        except Exception:
+            self._db.connection.execute("ROLLBACK")
+            raise
+        result = self.get_branch(branch_id)
+        result["copied_events"] = len(event_map)
+        return result
+
+    def set_primary(self, branch_id: str) -> dict[str, Any]:
+        branch = self.get_branch(branch_id)
+        if branch["status"] == "archived":
+            raise ValueError("cannot promote an archived branch")
+        now = utc_now()
+        self._db.connection.execute("BEGIN IMMEDIATE")
+        try:
+            self._db.execute(
+                """
+                UPDATE story_branches
+                SET is_primary = 0,
+                    status = CASE WHEN status = 'primary' THEN 'candidate' ELSE status END,
+                    updated_at = ?
+                WHERE is_primary = 1
+                """,
+                (now,),
+            )
+            self._db.execute(
+                """
+                UPDATE story_branches
+                SET is_primary = 1, status = 'primary', updated_at = ?
+                WHERE id = ?
+                """,
+                (now, branch_id),
+            )
+            # Enforce single primary.
+            count = self._db.fetchone(
+                "SELECT COUNT(*) AS c FROM story_branches WHERE is_primary = 1"
+            )
+            if count is None or int(count["c"]) != 1:
+                raise ValueError("project must have exactly one primary branch")
+            self._db.connection.execute("COMMIT")
+        except Exception:
+            self._db.connection.execute("ROLLBACK")
+            raise
+        return self.get_branch(branch_id)
+
+    def archive_branch(self, branch_id: str) -> dict[str, Any]:
+        branch = self.get_branch(branch_id)
+        if branch["is_primary"]:
+            raise ValueError("cannot archive the primary production branch")
+        now = utc_now()
+        self._db.execute(
+            """
+            UPDATE story_branches
+            SET status = 'archived', updated_at = ?
+            WHERE id = ?
+            """,
+            (now, branch_id),
+        )
+        self._db.commit()
+        return self.get_branch(branch_id)
+
     def import_source(
         self,
         *,
@@ -302,6 +536,7 @@ class StoryService:
         char_start: int | None = None,
         char_end: int | None = None,
         confidence: float = 1.0,
+        branch_id: str | None = None,
     ) -> NarrativeEventView:
         safe_title = title.strip()
         safe_summary = summary.strip()
@@ -329,7 +564,12 @@ class StoryService:
             char_start = None
             char_end = None
 
-        branch_id = self.primary_branch_id()
+        if branch_id is None:
+            branch_id = self.primary_branch_id()
+        else:
+            branch = self.get_branch(branch_id)
+            if branch["status"] == "archived":
+                raise ValueError("cannot add events to an archived branch")
         event_id = str(uuid.uuid4())
         revision_id = str(uuid.uuid4())
         now = utc_now()
@@ -389,8 +629,11 @@ class StoryService:
             confidence=float(confidence),
         )
 
-    def list_events(self) -> list[NarrativeEventView]:
-        branch_id = self.primary_branch_id()
+    def list_events(self, branch_id: str | None = None) -> list[NarrativeEventView]:
+        if branch_id is None:
+            branch_id = self.primary_branch_id()
+        else:
+            self.get_branch(branch_id)
         rows = self._db.fetchall(
             """
             SELECT * FROM narrative_event_revisions
@@ -530,6 +773,24 @@ def _split_into_chunks(text: str) -> list[tuple[str | None, int, int]]:
     if not chunks and text:
         return [("全文", 0, len(text))]
     return chunks
+
+
+def _row_branch(row: Any) -> dict[str, Any]:
+    forked = None
+    try:
+        forked = row["forked_from_revision_id"]
+    except (KeyError, IndexError):
+        forked = None
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "parent_branch_id": row["parent_branch_id"],
+        "forked_from_revision_id": forked,
+        "is_primary": bool(row["is_primary"]),
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
 
 
 def _row_source(row: Any) -> StorySourceRecord:

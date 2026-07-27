@@ -416,6 +416,7 @@ class SidecarRuntime:
             char_start = params.get("char_start")
             char_end = params.get("char_end")
             confidence = params.get("confidence", 1.0)
+            branch_id = params.get("branch_id")
             if not isinstance(title, str) or not isinstance(summary, str):
                 raise ValueError("title and summary must be strings")
             if not isinstance(order_key, (int, float)) or isinstance(order_key, bool):
@@ -434,6 +435,8 @@ class SidecarRuntime:
                 raise ValueError("char_end must be an integer")
             if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
                 raise ValueError("confidence must be a number")
+            if branch_id is not None and not isinstance(branch_id, str):
+                raise ValueError("branch_id must be a string")
             event_view = story.create_event(
                 title=title,
                 summary=summary,
@@ -443,17 +446,70 @@ class SidecarRuntime:
                 char_start=char_start,
                 char_end=char_end,
                 confidence=float(confidence),
+                branch_id=branch_id,
             )
             self._emit(success_response(request.id, event_view.as_dict()))
             return
 
         if method == "story.list_events":
-            events = story.list_events()
+            branch_id = params.get("branch_id")
+            if branch_id is not None and not isinstance(branch_id, str):
+                raise ValueError("branch_id must be a string")
+            events = story.list_events(branch_id)
             self._emit(
                 success_response(
                     request.id, {"events": [item.as_dict() for item in events]}
                 )
             )
+            return
+
+        if method == "story.list_branches":
+            self._emit(
+                success_response(
+                    request.id, {"branches": story.list_branches()}
+                )
+            )
+            return
+
+        if method == "story.create_branch":
+            name = params.get("name")
+            status = params.get("status", "exploring")
+            parent_branch_id = params.get("parent_branch_id")
+            if not isinstance(name, str):
+                raise ValueError("name must be a string")
+            if not isinstance(status, str):
+                raise ValueError("status must be a string")
+            if parent_branch_id is not None and not isinstance(parent_branch_id, str):
+                raise ValueError("parent_branch_id must be a string")
+            branch = story.create_branch(
+                name=name, status=status, parent_branch_id=parent_branch_id
+            )
+            self._emit(success_response(request.id, branch))
+            return
+
+        if method == "story.fork_branch":
+            from_branch_id = params.get("from_branch_id")
+            name = params.get("name")
+            if not isinstance(from_branch_id, str) or not isinstance(name, str):
+                raise ValueError("from_branch_id and name must be strings")
+            branch = story.fork_branch(from_branch_id=from_branch_id, name=name)
+            self._emit(success_response(request.id, branch))
+            return
+
+        if method == "story.set_primary":
+            branch_id = params.get("branch_id")
+            if not isinstance(branch_id, str) or not branch_id:
+                raise ValueError("branch_id must be a non-empty string")
+            branch = story.set_primary(branch_id)
+            self._emit(success_response(request.id, branch))
+            return
+
+        if method == "story.archive_branch":
+            branch_id = params.get("branch_id")
+            if not isinstance(branch_id, str) or not branch_id:
+                raise ValueError("branch_id must be a non-empty string")
+            branch = story.archive_branch(branch_id)
+            self._emit(success_response(request.id, branch))
             return
 
         if method == "story.create_edge":

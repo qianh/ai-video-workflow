@@ -235,6 +235,12 @@ PROJECT_MIGRATIONS: list[Migration] = [
         CREATE INDEX idx_pack_locks ON project_creative_pack_locks(locked_at DESC);
         """,
     ),
+    (
+        4,
+        """
+        ALTER TABLE story_branches ADD COLUMN forked_from_revision_id TEXT;
+        """,
+    ),
 ]
 
 

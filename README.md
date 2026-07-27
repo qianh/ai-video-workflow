@@ -18,7 +18,7 @@
 - **Creative Pack**：注册/发布修订、组合解析、固定套件评测、项目锁定（不自动覆盖旧锁定语义）。
 
 项目 RPC：`project.create` / `open` / `close` / `current` / `list_recent` / `overview`。  
-故事 RPC：`story.import_source` / `list_sources` / `split_chapters` / `list_chunks` / `create_event` / `list_events` / `create_edge` / `list_edges`。  
+故事 RPC：`story.import_source` / `list_sources` / `split_chapters` / `list_chunks` / `create_event` / `list_events` / `create_edge` / `list_edges` / `list_branches` / `create_branch` / `fork_branch` / `set_primary` / `archive_branch`。  
 创作包 RPC：`pack.register` / `publish_revision` / `list` / `compose` / `evaluate` / `lock` / `current_lock` / `list_compositions`。  
 任务 RPC：`job.enqueue` / `get` / `list` / `claim` / `complete` / `fail` / `cancel` / `pause` / `resume` / `reclaim_expired`。  
 环境 RPC：`env.summary`、`env.resolve`（必须传 `allow_keys`）。  

@@ -119,6 +119,9 @@ export function App({
   const [packCompositions, setPackCompositions] = useState<
     { name: string; status: string; composition_revision_id: string }[]
   >([]);
+  const [branches, setBranches] = useState<
+    { id: string; name: string; status: string; is_primary: boolean }[]
+  >([]);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -180,8 +183,25 @@ export function App({
       setStoryEvents([]);
       setPackLock(null);
       setPackCompositions([]);
+      setBranches([]);
     }
   }, [api]);
+
+  const refreshBranches = useCallback(async () => {
+    if (!project) {
+      setBranches([]);
+      return;
+    }
+    const listed = await api.request("story.list_branches", {}, requestId("story-branches"));
+    setBranches(
+      ((listed.branches as Array<Record<string, unknown>> | undefined) ?? []).map((item) => ({
+        id: String(item.id ?? ""),
+        name: String(item.name ?? ""),
+        status: String(item.status ?? ""),
+        is_primary: Boolean(item.is_primary),
+      })),
+    );
+  }, [api, project]);
 
   const refreshPackState = useCallback(async () => {
     if (!project) {
@@ -501,6 +521,58 @@ export function App({
       });
       await refreshPackState();
       setView("packs");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const forkExploreBranch = async () => {
+    setBusy("story-fork");
+    try {
+      await refreshBranches();
+      const primary = branches.find((item) => item.is_primary);
+      const listed = await api.request("story.list_branches", {}, requestId("story-branches-2"));
+      const currentBranches =
+        (listed.branches as Array<Record<string, unknown>> | undefined) ?? [];
+      const primaryId = String(
+        currentBranches.find((item) => item.is_primary)?.id ?? primary?.id ?? "",
+      );
+      if (!primaryId) {
+        throw new Error("未找到主线分支");
+      }
+      const forked = await api.request(
+        "story.fork_branch",
+        { from_branch_id: primaryId, name: `探索线 ${currentBranches.length}` },
+        requestId("story-fork"),
+      );
+      setNotice({
+        tone: "success",
+        text: `已分叉分支「${String(forked.name)}」· 复制事件 ${String(forked.copied_events ?? 0)}`,
+      });
+      await refreshBranches();
+      setView("story");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const promoteSelectedBranch = async (branchId: string) => {
+    setBusy("story-primary");
+    try {
+      const branch = await api.request(
+        "story.set_primary",
+        { branch_id: branchId },
+        requestId("story-primary"),
+      );
+      setNotice({
+        tone: "success",
+        text: `已将「${String(branch.name)}」设为生产主线`,
+      });
+      await refreshBranches();
     } catch (error) {
       setNotice({ tone: "warning", text: errorMessage(error) });
     } finally {
@@ -836,7 +908,10 @@ export function App({
                 <button
                   aria-label="刷新故事"
                   className="action"
-                  onClick={() => void refreshStoryState()}
+                  onClick={() => {
+                    void refreshStoryState();
+                    void refreshBranches();
+                  }}
                   disabled={busy !== null}
                 >
                   <span className="action-no">S2</span>
@@ -845,8 +920,48 @@ export function App({
                     <small>sources / chunks / events</small>
                   </span>
                 </button>
+                <button
+                  aria-label="分叉探索线"
+                  className="action"
+                  onClick={() => void forkExploreBranch()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">S3</span>
+                  <span>
+                    <strong>分叉探索线</strong>
+                    <small>fork primary branch</small>
+                  </span>
+                </button>
               </div>
               <div className="overview-columns">
+                <div>
+                  <h4>分支</h4>
+                  {branches.length === 0 ? (
+                    <p className="empty-hint">打开后自动创建主线</p>
+                  ) : (
+                    <ul className="job-list" aria-label="故事分支列表">
+                      {branches.map((branch) => (
+                        <li key={branch.id}>
+                          <code>{branch.is_primary ? "primary" : branch.status}</code>{" "}
+                          {branch.name}
+                          {!branch.is_primary && branch.status !== "archived" ? (
+                            <>
+                              {" "}
+                              <button
+                                className="text-button"
+                                aria-label={`设为主线 ${branch.name}`}
+                                onClick={() => void promoteSelectedBranch(branch.id)}
+                                disabled={busy !== null}
+                              >
+                                设为主线
+                              </button>
+                            </>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
                 <div>
                   <h4>来源</h4>
                   {sources.length === 0 ? (
