@@ -615,6 +615,73 @@ PROJECT_MIGRATIONS: list[Migration] = [
             ON voice_profile_revisions(voice_profile_id, revision_no);
         """,
     ),
+    (
+        10,
+        """
+        CREATE TABLE character_identity_packs (
+            id TEXT PRIMARY KEY,
+            character_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            current_revision_id TEXT,
+            confirmed_revision_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(character_id) REFERENCES characters(id)
+        );
+
+        CREATE INDEX idx_identity_packs_character
+            ON character_identity_packs(character_id, status);
+
+        CREATE TABLE character_identity_pack_revisions (
+            id TEXT PRIMARY KEY,
+            pack_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            multi_view_asset_ids_json TEXT NOT NULL DEFAULT '[]',
+            shot_size_asset_ids_json TEXT NOT NULL DEFAULT '[]',
+            expression_asset_ids_json TEXT NOT NULL DEFAULT '[]',
+            outfit_asset_ids_json TEXT NOT NULL DEFAULT '[]',
+            positive_prompt TEXT NOT NULL DEFAULT '',
+            negative_prompt TEXT NOT NULL DEFAULT '',
+            reference_priority_json TEXT NOT NULL DEFAULT '[]',
+            height_cm REAL,
+            proportion_notes TEXT,
+            voice_profile_id TEXT,
+            selected_candidate_id TEXT,
+            content_hash TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            confirmed_at TEXT,
+            FOREIGN KEY(pack_id) REFERENCES character_identity_packs(id),
+            FOREIGN KEY(voice_profile_id) REFERENCES voice_profiles(id),
+            UNIQUE(pack_id, revision_no)
+        );
+
+        CREATE INDEX idx_identity_pack_revisions
+            ON character_identity_pack_revisions(pack_id, revision_no);
+
+        CREATE TABLE look_candidates (
+            id TEXT PRIMARY KEY,
+            identity_pack_revision_id TEXT NOT NULL,
+            candidate_no INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            negative_prompt TEXT,
+            asset_rel_path TEXT,
+            source TEXT NOT NULL,
+            provider_meta_json TEXT NOT NULL DEFAULT '{}',
+            width INTEGER,
+            height INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(identity_pack_revision_id)
+                REFERENCES character_identity_pack_revisions(id),
+            UNIQUE(identity_pack_revision_id, candidate_no)
+        );
+
+        CREATE INDEX idx_look_candidates_revision
+            ON look_candidates(identity_pack_revision_id, candidate_no);
+        """,
+    ),
 ]
 
 

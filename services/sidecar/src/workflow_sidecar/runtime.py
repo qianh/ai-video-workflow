@@ -26,6 +26,7 @@ from .persistence.creative_packs import CreativePackService
 from .persistence.drafts import DraftService
 from .persistence.episode_scripts import EpisodeScriptService
 from .persistence.generation import GenerationService
+from .persistence.identity_packs import IdentityPackService
 from .persistence.story import StoryService
 from .persistence.story_package import StoryPackageService
 from .protocol import Request, error_response, event, success_response
@@ -218,6 +219,10 @@ class SidecarRuntime:
             await self._execute_characters(request)
             return
 
+        if request.method.startswith("identity."):
+            await self._execute_identity(request)
+            return
+
         if request.method.startswith("job."):
             await self._execute_job(request)
             return
@@ -292,6 +297,15 @@ class SidecarRuntime:
     def _characters(self) -> CharacterService:
         self._workspace.require_project_db()
         return CharacterService(self._workspace.require_project_db())
+
+    def _identity(self) -> IdentityPackService:
+        current = self._workspace.current
+        if current is None:
+            raise ValueError("no project is open")
+        return IdentityPackService(
+            self._workspace.require_project_db(),
+            Path(current.root_path),
+        )
 
     def _resolve_branch_id(self, params: dict[str, Any]) -> str:
         branch_id = params.get("branch_id")
@@ -472,6 +486,130 @@ class SidecarRuntime:
                 raise ValueError("limit must be an integer")
             result = svc.list_package_revisions(limit=limit)
             self._emit(success_response(request.id, {"revisions": result}))
+            return
+
+        self._emit(
+            error_response(
+                request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
+            )
+        )
+
+    async def _execute_identity(self, request: Request) -> None:
+        svc = self._identity()
+        method = request.method
+        params = request.params
+
+        if method == "identity.create":
+            character_id = params.get("character_id")
+            if not isinstance(character_id, str):
+                raise ValueError("character_id must be a string")
+            result = svc.create_pack(
+                character_id=character_id,
+                positive_prompt=params.get("positive_prompt", ""),
+                negative_prompt=params.get("negative_prompt", ""),
+                height_cm=params.get("height_cm"),
+                proportion_notes=params.get("proportion_notes"),
+                voice_profile_id=params.get("voice_profile_id"),
+                multi_view_asset_ids=params.get("multi_view_asset_ids"),
+                shot_size_asset_ids=params.get("shot_size_asset_ids"),
+                expression_asset_ids=params.get("expression_asset_ids"),
+                outfit_asset_ids=params.get("outfit_asset_ids"),
+                reference_priority=params.get("reference_priority"),
+                notes=params.get("notes"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "identity.get":
+            pack_id = params.get("pack_id")
+            if not isinstance(pack_id, str):
+                raise ValueError("pack_id must be a string")
+            self._emit(success_response(request.id, svc.get_pack(pack_id)))
+            return
+
+        if method == "identity.list":
+            character_id = params.get("character_id")
+            limit = params.get("limit", 50)
+            if character_id is not None and not isinstance(character_id, str):
+                raise ValueError("character_id must be a string")
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            result = svc.list_packs(character_id=character_id, limit=limit)
+            self._emit(success_response(request.id, {"packs": result}))
+            return
+
+        if method == "identity.update":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            result = svc.update_revision(
+                revision_id,
+                positive_prompt=params.get("positive_prompt"),
+                negative_prompt=params.get("negative_prompt"),
+                height_cm=params.get("height_cm"),
+                proportion_notes=params.get("proportion_notes"),
+                voice_profile_id=params.get("voice_profile_id"),
+                multi_view_asset_ids=params.get("multi_view_asset_ids"),
+                shot_size_asset_ids=params.get("shot_size_asset_ids"),
+                expression_asset_ids=params.get("expression_asset_ids"),
+                outfit_asset_ids=params.get("outfit_asset_ids"),
+                reference_priority=params.get("reference_priority"),
+                notes=params.get("notes"),
+                clear_voice=bool(params.get("clear_voice", False)),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "identity.generate_looks":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            count = params.get("count", 3)
+            if isinstance(count, bool) or not isinstance(count, int):
+                raise ValueError("count must be an integer")
+            result = svc.generate_looks(
+                revision_id,
+                count=count,
+                prompt_override=params.get("prompt_override"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "identity.select_look":
+            candidate_id = params.get("candidate_id")
+            if not isinstance(candidate_id, str):
+                raise ValueError("candidate_id must be a string")
+            self._emit(success_response(request.id, svc.select_look(candidate_id)))
+            return
+
+        if method == "identity.validate":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            self._emit(success_response(request.id, svc.validate(revision_id)))
+            return
+
+        if method == "identity.approve":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            self._emit(success_response(request.id, svc.approve(revision_id)))
+            return
+
+        if method == "identity.confirm":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            self._emit(success_response(request.id, svc.confirm(revision_id)))
+            return
+
+        if method == "identity.gate":
+            character_id = params.get("character_id")
+            if not isinstance(character_id, str):
+                raise ValueError("character_id must be a string")
+            self._emit(
+                success_response(request.id, svc.production_gate(character_id))
+            )
             return
 
         self._emit(

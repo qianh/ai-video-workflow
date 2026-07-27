@@ -524,7 +524,7 @@ describe("M1 shell", () => {
               id: "p1",
               name: "试播项目",
               root_path: "/tmp/demo",
-              schema_version: 9,
+              schema_version: 10,
             },
           };
         }
@@ -565,6 +565,42 @@ describe("M1 shell", () => {
             current_revision: { id: "vrev-1", status: "approved" },
           };
         }
+        if (method === "identity.create") {
+          return {
+            id: "pack-1",
+            current_revision: { id: "irev-1", status: "draft" },
+          };
+        }
+        if (method === "identity.generate_looks") {
+          return {
+            count: 3,
+            candidates: [
+              { id: "look-1", status: "generated" },
+              { id: "look-2", status: "generated" },
+              { id: "look-3", status: "generated" },
+            ],
+          };
+        }
+        if (method === "identity.select_look") {
+          return {
+            candidate: { id: "look-1", status: "selected" },
+            revision: { id: "irev-1", selected_candidate_id: "look-1" },
+          };
+        }
+        if (method === "identity.confirm") {
+          return {
+            id: "pack-1",
+            confirmed_revision_id: "irev-1",
+            confirmed_revision: { id: "irev-1", status: "confirmed" },
+          };
+        }
+        if (method === "identity.gate") {
+          return {
+            character_id: "char-1",
+            ready_for_production: true,
+            identity_pack_required: true,
+          };
+        }
         if (method === "character.overview") {
           return {
             characters: [
@@ -582,12 +618,13 @@ describe("M1 shell", () => {
     render(<App api={api} showDiagnostics />);
     await user.click(await screen.findByRole("button", { name: "角色声音" }));
     await user.click(await screen.findByRole("button", { name: "创建样例角色与声音" }));
-    expect(await screen.findByText(/角色档案已建立/)).toBeInTheDocument();
+    expect(await screen.findByText(/角色\+定妆完成/)).toBeInTheDocument();
     expect(screen.getByLabelText("角色列表")).toHaveTextContent("阿宁");
-    expect(screen.getByLabelText("角色统计")).toHaveTextContent("关系 1");
+    expect(screen.getByLabelText("角色统计")).toHaveTextContent("定妆候选 3");
+    expect(screen.getByLabelText("角色统计")).toHaveTextContent("ready");
     expect(api.request).toHaveBeenCalledWith(
-      "voice.approve",
-      { revision_id: "vrev-1" },
+      "identity.confirm",
+      { revision_id: "irev-1" },
       expect.any(String),
     );
   });

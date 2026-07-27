@@ -173,6 +173,9 @@ export function App({
     relationshipCount: number;
     voiceCount: number;
     names: string[];
+    identityConfirmed: boolean;
+    lookCount: number;
+    gateReady: boolean;
   } | null>(null);
 
   const refreshStatus = useCallback(async () => {
@@ -772,6 +775,46 @@ export function App({
         { revision_id: voiceRev },
         requestId("voice-approve"),
       );
+      const pack = await api.request(
+        "identity.create",
+        {
+          character_id: String(hero.id),
+          positive_prompt: "cold-tone night market girl, short hair, raincoat",
+          negative_prompt: "blurry, extra limbs",
+          height_cm: 165,
+          proportion_notes: "head:body 1:7",
+          voice_profile_id: String(voice.id),
+        },
+        requestId("identity-create"),
+      );
+      const packRev = String(
+        (pack.current_revision as { id?: string } | undefined)?.id ?? "",
+      );
+      const looks = await api.request(
+        "identity.generate_looks",
+        { revision_id: packRev, count: 3 },
+        requestId("identity-looks"),
+      );
+      const candidates =
+        (looks.candidates as Array<{ id?: string }> | undefined) ?? [];
+      const firstLook = String(candidates[0]?.id ?? "");
+      if (firstLook) {
+        await api.request(
+          "identity.select_look",
+          { candidate_id: firstLook },
+          requestId("identity-select"),
+        );
+      }
+      await api.request(
+        "identity.confirm",
+        { revision_id: packRev },
+        requestId("identity-confirm"),
+      );
+      const gate = await api.request(
+        "identity.gate",
+        { character_id: String(hero.id) },
+        requestId("identity-gate"),
+      );
       const overview = await api.request(
         "character.overview",
         {},
@@ -787,10 +830,13 @@ export function App({
         relationshipCount: relationships.length,
         voiceCount: voices.length,
         names: characters.map((item) => String(item.current_revision?.name ?? "")),
+        identityConfirmed: Boolean(gate.ready_for_production),
+        lookCount: candidates.length,
+        gateReady: Boolean(gate.ready_for_production),
       });
       setNotice({
         tone: "success",
-        text: `角色档案已建立 · chars=${characters.length} · rels=${relationships.length} · voices=${voices.length}`,
+        text: `角色+定妆完成 · chars=${characters.length} · looks=${candidates.length} · gate=${String(gate.ready_for_production)}`,
       });
       setView("characters");
     } catch (error) {
@@ -1660,10 +1706,10 @@ export function App({
         <section className="console-panel" aria-label="角色声音">
           <div className="panel-heading">
             <div>
-              <p className="eyebrow">CHARACTERS · VOICE</p>
-              <h3>角色 · 关系 · 声音档案</h3>
+              <p className="eyebrow">CHARACTERS · VOICE · LOOK</p>
+              <h3>角色 · 声音 · 定妆身份包</h3>
             </div>
-            <span className="panel-number">M2.09</span>
+            <span className="panel-number">M2.09–10</span>
           </div>
           {!project ? (
             <p className="empty-hint">请先打开项目。</p>
@@ -1678,8 +1724,8 @@ export function App({
                 >
                   <span className="action-no">R1</span>
                   <span>
-                    <strong>创建样例角色与声音</strong>
-                    <small>character + relationship + voice</small>
+                    <strong>创建角色+定妆确认</strong>
+                    <small>cast → looks → select → confirm</small>
                   </span>
                 </button>
               </div>
@@ -1703,12 +1749,20 @@ export function App({
                       <li>角色 {characterSummary.characterCount}</li>
                       <li>关系 {characterSummary.relationshipCount}</li>
                       <li>声音档案 {characterSummary.voiceCount}</li>
+                      <li>定妆候选 {characterSummary.lookCount}</li>
+                      <li>
+                        生产门禁{" "}
+                        <code>
+                          {characterSummary.gateReady ? "ready" : "blocked"}
+                        </code>
+                      </li>
                     </ul>
                   </div>
                 </div>
               )}
               <p className="empty-hint">
-                角色修订不含媒体提示词；身份包与定妆在 M2-10。
+                默认 mock 定妆图落盘 assets/images/looks；WORKFLOW_ENABLE_GROK_LOOKS=1
+                时走 Grok image_gen。主角/反派未 confirm 身份包不可批量生成。
               </p>
             </>
           )}
