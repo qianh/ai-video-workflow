@@ -712,6 +712,99 @@ describe("M1 shell", () => {
     expect(screen.getByLabelText("Grok 限流状态")).toHaveTextContent("50");
   });
 
+
+  it("loads review queue, shot wall, and export center", async () => {
+    const api = createApi({
+      request: vi.fn().mockImplementation(async (method: string) => {
+        if (method === "project.current") {
+          return {
+            project: {
+              id: "p1",
+              name: "试播项目",
+              root_path: "/tmp/demo",
+              schema_version: 16,
+            },
+          };
+        }
+        if (method === "project.list_recent") return { projects: [] };
+        if (method === "job.list") return { jobs: [] };
+        if (method === "project.overview") return emptyOverview;
+        if (method === "qc.list_reviews") {
+          return {
+            items: [
+              {
+                id: "r1",
+                subject_id: "item-1",
+                reason: "QC:tiny_output needs human",
+                status: "open",
+              },
+            ],
+          };
+        }
+        if (method === "qc.resolve") {
+          return { id: "r1", status: "waived" };
+        }
+        if (method === "storyboard.list") {
+          return { storyboards: [{ id: "sb1" }] };
+        }
+        if (method === "storyboard.get") {
+          return {
+            current_revision: { id: "rev1" },
+            shots: [
+              {
+                shot_no: 1,
+                status: "active",
+                current_revision: {
+                  id: "sr1",
+                  framing: "MS",
+                  action_text: "雨中行走",
+                },
+              },
+            ],
+          };
+        }
+        if (method === "production.list") {
+          return {
+            items: [
+              {
+                shot_revision_id: "sr1",
+                status: "succeeded",
+                output_asset_id: "a1",
+              },
+            ],
+          };
+        }
+        if (method === "export.list") {
+          return {
+            exports: [
+              {
+                id: "ex1",
+                profile: "master",
+                status: "succeeded",
+                output_relative_path: "exports/master/ep.mp4",
+                exists: true,
+                byte_size: 1024,
+              },
+            ],
+          };
+        }
+        return { status: "ok" };
+      }),
+    });
+    const user = userEvent.setup();
+    render(<App api={api} showDiagnostics />);
+    await user.click(await screen.findByRole("button", { name: "审核队列" }));
+    await user.click(await screen.findByRole("button", { name: "刷新审核队列" }));
+    expect(await screen.findByLabelText("审核队列列表")).toHaveTextContent("tiny_output");
+    await user.click(await screen.findByRole("button", { name: "镜头墙" }));
+    await user.click(await screen.findByRole("button", { name: "刷新镜头墙" }));
+    expect(await screen.findByLabelText("镜头墙列表")).toHaveTextContent("雨中行走");
+    expect(screen.getByLabelText("镜头墙列表")).toHaveTextContent("succeeded");
+    await user.click(await screen.findByRole("button", { name: "导出中心" }));
+    await user.click(await screen.findByRole("button", { name: "刷新导出列表" }));
+    expect(await screen.findByLabelText("导出任务列表")).toHaveTextContent("master");
+  });
+
   it("runs M5 continuous acceptance and shows grade", async () => {
     const api = createApi({
       request: vi.fn().mockImplementation(async (method: string) => {

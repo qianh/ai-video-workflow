@@ -51,6 +51,9 @@ type ShellView =
   | "production"
   | "media"
   | "timeline"
+  | "review"
+  | "shots"
+  | "exports"
   | "components"
   | "acceptance"
   | "drafts"
@@ -272,6 +275,32 @@ export function App({
     rateBudget: number;
     guide: string[];
   } | null>(null);
+  const [reviewQueue, setReviewQueue] = useState<
+    { id: string; subject_id: string; reason: string; status: string }[]
+  >([]);
+  const [shotWall, setShotWall] = useState<{
+    storyboardId: string;
+    revisionId: string;
+    shots: {
+      shotNo: number;
+      framing: string;
+      action: string;
+      status: string;
+      productionStatus: string;
+      assetId?: string;
+    }[];
+  } | null>(null);
+  const [exportList, setExportList] = useState<
+    {
+      id: string;
+      profile: string;
+      status: string;
+      path: string;
+      exists: boolean;
+      byteSize: number;
+    }[]
+  >([]);
+
 
 
 
@@ -880,6 +909,183 @@ export function App({
 
 
 
+
+  const loadReviewQueue = async () => {
+    setBusy("review-queue");
+    try {
+      const res = await api.request(
+        "qc.list_reviews",
+        { open_only: true },
+        requestId("qc-list-ui"),
+      );
+      const items =
+        ((res.items as Array<Record<string, unknown>> | undefined) ??
+          (res.reviews as Array<Record<string, unknown>> | undefined) ??
+          []);
+      setReviewQueue(
+        items.map((item) => ({
+          id: String(item.id ?? ""),
+          subject_id: String(item.subject_id ?? ""),
+          reason: String(item.reason ?? ""),
+          status: String(item.status ?? "open"),
+        })),
+      );
+      setNotice({
+        tone: items.length ? "warning" : "success",
+        text: `审核队列 · open=${items.length}`,
+      });
+      setView("review");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const resolveReviewItem = async (itemId: string, status: string) => {
+    setBusy("review-resolve");
+    try {
+      await api.request(
+        "qc.resolve",
+        { item_id: itemId, status, note: `ui:${status}` },
+        requestId("qc-resolve"),
+      );
+      await loadReviewQueue();
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+      setBusy(null);
+    }
+  };
+
+  const loadShotWall = async () => {
+    setBusy("shot-wall");
+    try {
+      const boards = await api.request("storyboard.list", {}, requestId("sb-list-wall"));
+      const storyboards =
+        (boards.storyboards as Array<Record<string, unknown>> | undefined) ?? [];
+      if (!storyboards[0]?.id) {
+        setShotWall(null);
+        setNotice({ tone: "warning", text: "暂无分镜，请先跑生产流水线" });
+        setView("shots");
+        return;
+      }
+      const detail = await api.request(
+        "storyboard.get",
+        { storyboard_id: String(storyboards[0].id) },
+        requestId("sb-get-wall"),
+      );
+      const rev =
+        (detail.current_revision as Record<string, unknown> | undefined) ??
+        ((detail.storyboard as Record<string, unknown> | undefined)
+          ?.current_revision as Record<string, unknown> | undefined) ??
+        {};
+      const revId = String(rev.id ?? "");
+      const shotsRaw =
+        (detail.shots as Array<Record<string, unknown>> | undefined) ??
+        (rev.shots as Array<Record<string, unknown>> | undefined) ??
+        [];
+      let items: Array<Record<string, unknown>> = [];
+      if (revId) {
+        const prod = await api.request(
+          "production.list",
+          { storyboard_revision_id: revId },
+          requestId("prod-list-wall"),
+        );
+        items = (prod.items as Array<Record<string, unknown>> | undefined) ?? [];
+      }
+      const byShot = new Map<string, Record<string, unknown>>();
+      for (const item of items) {
+        byShot.set(String(item.shot_revision_id ?? ""), item);
+      }
+      setShotWall({
+        storyboardId: String(storyboards[0].id),
+        revisionId: revId,
+        shots: shotsRaw.map((shot) => {
+          const srev =
+            (shot.current_revision as Record<string, unknown> | undefined) ?? {};
+          const srevId = String(srev.id ?? "");
+          const prod = byShot.get(srevId);
+          return {
+            shotNo: Number(shot.shot_no ?? srev.shot_no ?? 0),
+            framing: String(srev.framing ?? "-"),
+            action: String(srev.action_text ?? srev.purpose ?? "").slice(0, 48),
+            status: String(shot.status ?? srev.status ?? "active"),
+            productionStatus: prod
+              ? String(prod.status ?? "unknown")
+              : "none",
+            assetId: prod?.output_asset_id
+              ? String(prod.output_asset_id)
+              : undefined,
+          };
+        }),
+      });
+      setNotice({
+        tone: "success",
+        text: `镜头墙 · shots=${shotsRaw.length} items=${items.length}`,
+      });
+      setView("shots");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runShotBatch = async () => {
+    if (!shotWall?.revisionId) {
+      await loadShotWall();
+      return;
+    }
+    setBusy("shot-batch");
+    try {
+      const batch = await api.request(
+        "production.batch",
+        { storyboard_revision_id: shotWall.revisionId, kind: "image" },
+        requestId("prod-batch"),
+      );
+      setNotice({
+        tone: "success",
+        text: `批量生产完成 · count=${String(batch.count ?? 0)}`,
+      });
+      await loadShotWall();
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+      setBusy(null);
+    }
+  };
+
+  const loadExportCenter = async () => {
+    setBusy("export-center");
+    try {
+      const res = await api.request(
+        "export.list",
+        { limit: 50 },
+        requestId("export-list"),
+      );
+      const exports =
+        (res.exports as Array<Record<string, unknown>> | undefined) ?? [];
+      setExportList(
+        exports.map((item) => ({
+          id: String(item.id ?? ""),
+          profile: String(item.profile ?? ""),
+          status: String(item.status ?? ""),
+          path: String(item.output_relative_path ?? item.absolute_path ?? ""),
+          exists: Boolean(item.exists),
+          byteSize: Number(item.byte_size ?? 0),
+        })),
+      );
+      setNotice({
+        tone: "success",
+        text: `导出中心 · ${exports.length} 条`,
+      });
+      setView("exports");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const loadMediaBrowser = async () => {
     setBusy("media-browser");
     try {
@@ -1072,7 +1278,11 @@ export function App({
         { open_only: true },
         requestId("qc-list"),
       );
-      const openReviews = ((reviews.reviews as unknown[] | undefined) ?? []).length;
+      const openReviews = (
+        (reviews.items as unknown[] | undefined) ??
+        (reviews.reviews as unknown[] | undefined) ??
+        []
+      ).length;
       setProductionWorkspace({
         shotCount,
         itemCount,
@@ -2160,7 +2370,10 @@ export function App({
     { id: "gates", label: "确认门" },
     { id: "production", label: "生产交付" },
     { id: "media", label: "资产预览" },
+    { id: "shots", label: "镜头墙" },
+    { id: "review", label: "审核队列" },
     { id: "timeline", label: "时间线" },
+    { id: "exports", label: "导出中心" },
     { id: "components", label: "组件/限流" },
     { id: "acceptance", label: "M5 验收" },
     { id: "drafts", label: "草稿修订" },
@@ -2679,6 +2892,197 @@ export function App({
         </section>
       )}
 
+
+
+      {view === "review" && (
+        <section className="console-panel" aria-label="审核队列">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">EXCEPTION REVIEW</p>
+              <h3>异常审核队列</h3>
+            </div>
+            <span className="panel-number">R1</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="刷新审核队列"
+                  className="action primary"
+                  onClick={() => void loadReviewQueue()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">R1</span>
+                  <span>
+                    <strong>刷新队列</strong>
+                    <small>qc.list_reviews open_only</small>
+                  </span>
+                </button>
+              </div>
+              {reviewQueue.length === 0 ? (
+                <p className="empty-hint">无待处理异常，或尚未生产 mock QC。</p>
+              ) : (
+                <ul className="job-list" aria-label="审核队列列表">
+                  {reviewQueue.map((item) => (
+                    <li key={item.id}>
+                      <code>{item.status}</code> {item.reason.slice(0, 80)}{" "}
+                      <small>{item.subject_id.slice(0, 8)}</small>{" "}
+                      <button
+                        type="button"
+                        aria-label={`通过审核 ${item.id.slice(0, 6)}`}
+                        onClick={() => void resolveReviewItem(item.id, "approved")}
+                        disabled={busy !== null}
+                      >
+                        通过
+                      </button>{" "}
+                      <button
+                        type="button"
+                        aria-label={`豁免审核 ${item.id.slice(0, 6)}`}
+                        onClick={() => void resolveReviewItem(item.id, "waived")}
+                        disabled={busy !== null}
+                      >
+                        豁免
+                      </button>{" "}
+                      <button
+                        type="button"
+                        aria-label={`驳回审核 ${item.id.slice(0, 6)}`}
+                        onClick={() => void resolveReviewItem(item.id, "rejected")}
+                        disabled={busy !== null}
+                      >
+                        驳回
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </section>
+      )}
+
+      {view === "shots" && (
+        <section className="console-panel" aria-label="镜头墙">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">EPISODE SHOT WALL</p>
+              <h3>分镜镜头墙</h3>
+            </div>
+            <span className="panel-number">S1</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="刷新镜头墙"
+                  className="action primary"
+                  onClick={() => void loadShotWall()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">S1</span>
+                  <span>
+                    <strong>刷新镜头墙</strong>
+                    <small>storyboard + production status</small>
+                  </span>
+                </button>
+                <button
+                  aria-label="批量生产镜头"
+                  className="action"
+                  onClick={() => void runShotBatch()}
+                  disabled={busy !== null || !shotWall?.revisionId}
+                >
+                  <span className="action-no">S2</span>
+                  <span>
+                    <strong>批量生产</strong>
+                    <small>production.batch image</small>
+                  </span>
+                </button>
+              </div>
+              {!shotWall ? (
+                <p className="empty-hint">尚未加载分镜。</p>
+              ) : (
+                <>
+                  <p className="project-meta">
+                    revision <code>{shotWall.revisionId.slice(0, 8) || "-"}</code> ·{" "}
+                    {shotWall.shots.length} shots
+                  </p>
+                  <ul className="job-list" aria-label="镜头墙列表">
+                    {shotWall.shots.map((shot) => (
+                      <li key={`${shot.shotNo}-${shot.action}`}>
+                        <code>#{shot.shotNo}</code>{" "}
+                        <code>{shot.framing}</code>{" "}
+                        <code>{shot.productionStatus}</code> {shot.action || "—"}
+                        {shot.assetId ? (
+                          <>
+                            {" "}
+                            <button
+                              type="button"
+                              aria-label={`预览镜头资产 ${shot.shotNo}`}
+                              onClick={() => void openMediaPreview(shot.assetId!)}
+                              disabled={busy !== null}
+                            >
+                              预览
+                            </button>
+                          </>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </>
+          )}
+        </section>
+      )}
+
+      {view === "exports" && (
+        <section className="console-panel" aria-label="导出中心">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">EXPORT CENTER</p>
+              <h3>母版 / 抖音 / 红果导出</h3>
+            </div>
+            <span className="panel-number">E1</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="刷新导出列表"
+                  className="action primary"
+                  onClick={() => void loadExportCenter()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">E1</span>
+                  <span>
+                    <strong>刷新导出</strong>
+                    <small>export.list</small>
+                  </span>
+                </button>
+              </div>
+              {exportList.length === 0 ? (
+                <p className="empty-hint">暂无导出记录。请先跑流水线或 M5 验收。</p>
+              ) : (
+                <ul className="job-list" aria-label="导出任务列表">
+                  {exportList.map((item) => (
+                    <li key={item.id}>
+                      <code>{item.profile}</code>{" "}
+                      <code>{item.status}</code>{" "}
+                      {item.exists ? "✓" : "✗"} {item.path}{" "}
+                      <small>{item.byteSize} B</small>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </section>
+      )}
 
       {view === "media" && (
         <section className="console-panel" aria-label="资产预览">

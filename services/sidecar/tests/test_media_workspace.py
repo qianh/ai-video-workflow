@@ -172,3 +172,46 @@ def test_media_workspace_rpc(tmp_path: Path, monkeypatch) -> None:  # type: igno
     assert by_id["probe"]["result"]["components"]["cosyvoice3"]["status"]
     assert by_id["prev"]["result"]["mode"] == "data_url"
     assert by_id["tll"]["result"]["timelines"]
+
+
+def test_export_list_and_qc_resolve(tmp_path: Path) -> None:
+    ws = WorkspaceService(tmp_path / "g.db")
+    parent = tmp_path / "p"
+    parent.mkdir()
+    project = ws.create_project(parent, "Exp")
+    db = ws.require_project_db()
+    root = Path(project.root_path)
+    post = PostProductionService(db, root)
+    from workflow_sidecar.persistence.production import ProductionService
+    from workflow_sidecar.persistence.story import StoryService
+    from workflow_sidecar.persistence.storyboard import StoryboardService
+
+    branch = StoryService(db, root).primary_branch_id()
+    sb = StoryboardService(db)
+    board = sb.create_storyboard(episode_id="e1", branch_id=branch)
+    rev = board["current_revision"]["id"]
+    sb.generate_default_shots(rev, count=6, branch_id=branch)
+    prod = ProductionService(db, root)
+    batch = prod.batch_plan_and_execute(rev, kind="image")
+    reviews = prod.list_review_queue(open_only=True)
+    assert reviews
+    resolved = prod.resolve_review(
+        reviews[0]["id"], status="waived", note="test"
+    )
+    assert resolved["status"] == "waived"
+
+    tl = post.create_timeline(episode_id="e1")
+    tl_rev = tl["current_revision"]["id"]
+    post.render_timeline(tl_rev, kind="proxy", force_mock=True)
+    post.export_episode(
+        episode_id="e1",
+        profile="master",
+        timeline_revision_id=tl_rev,
+        force_mock=True,
+    )
+    exports = post.list_exports(episode_id="e1")
+    assert exports
+    assert exports[0]["profile"] == "master"
+    assert exports[0]["exists"] is True
+    assert batch["count"] == 6
+    ws.close()

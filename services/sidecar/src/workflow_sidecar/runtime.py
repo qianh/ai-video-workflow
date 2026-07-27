@@ -1326,6 +1326,24 @@ class SidecarRuntime:
                 )
             )
             return
+        if method == "export.list":
+            limit = p.get("limit", 50)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            episode_id = p.get("episode_id")
+            if episode_id is not None and not isinstance(episode_id, str):
+                raise ValueError("episode_id must be a string")
+            self._emit(
+                success_response(
+                    request.id,
+                    {
+                        "exports": self._post().list_exports(
+                            episode_id=episode_id, limit=limit
+                        )
+                    },
+                )
+            )
+            return
 
         self._emit(
             error_response(

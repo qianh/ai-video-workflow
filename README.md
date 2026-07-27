@@ -59,7 +59,8 @@ AWAP RPC：`awap.catalog` / `probe` / `route`。
 CosyVoice：`WORKFLOW_COSYVOICE_BIN` 或 `components.register`；未就绪时回退 macOS say。  
 分镜 RPC：`storyboard.create` / `generate_shots` / `confirm` / `list` / `get`。  
 生产 RPC：`production.batch` / `list` / `mark_stale` / `lock`；`qc.list_reviews` / `resolve`。  
-后期 RPC：`tts.authorize` / `synthesize`；`lipsync.plan`；`caption.*`；`music.*`；`timeline.*`；`mix.create`；`render.timeline`；`cover.create`；`export.episode`。  
+后期 RPC：`tts.authorize` / `synthesize`；`lipsync.plan`；`caption.*`；`music.*`；`timeline.*`；`mix.create`；`render.timeline`；`cover.create`；`export.episode` / `export.list`。  
+生产工作台 UI：镜头墙 · 审核队列 · 资产预览 · 时间线 · 导出中心。  
 任务 RPC：`job.enqueue` / `get` / `list` / `claim` / `complete` / `fail` / `cancel` / `pause` / `resume` / `reclaim_expired`。  
 环境 RPC：`env.summary`、`env.resolve`（必须传 `allow_keys`）。  
 快照 RPC：`snapshot.create`、`snapshot.list`。  

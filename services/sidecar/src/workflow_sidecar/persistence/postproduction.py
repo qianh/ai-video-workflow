@@ -1107,6 +1107,49 @@ class PostProductionService:
             "checklist": checklist,
         }
 
+    def list_exports(
+        self, *, episode_id: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        if limit < 1 or limit > 200:
+            raise ValueError("limit must be between 1 and 200")
+        if episode_id is not None:
+            rows = self._db.fetchall(
+                """
+                SELECT * FROM export_jobs
+                WHERE episode_id = ?
+                ORDER BY created_at DESC LIMIT ?
+                """,
+                (episode_id, limit),
+            )
+        else:
+            rows = self._db.fetchall(
+                """
+                SELECT * FROM export_jobs
+                ORDER BY created_at DESC LIMIT ?
+                """,
+                (limit,),
+            )
+        result = []
+        for row in rows:
+            rel = row["output_relative_path"]
+            path = self._root / rel if rel else None
+            result.append(
+                {
+                    "id": row["id"],
+                    "episode_id": row["episode_id"],
+                    "profile": row["profile"],
+                    "status": row["status"],
+                    "output_relative_path": rel,
+                    "absolute_path": str(path.resolve()) if path and path.is_file() else None,
+                    "exists": bool(path and path.is_file()),
+                    "byte_size": path.stat().st_size if path and path.is_file() else 0,
+                    "checklist": json.loads(row["checklist_json"] or "[]"),
+                    "created_at": row["created_at"],
+                    "finished_at": row["finished_at"],
+                }
+            )
+        return result
+
     def _ms_to_ass(self, ms: int) -> str:
         h = ms // 3600000
         m = (ms % 3600000) // 60000
