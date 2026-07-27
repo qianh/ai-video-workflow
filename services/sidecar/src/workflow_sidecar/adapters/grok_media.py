@@ -42,6 +42,20 @@ def generate_image(
             error="grok CLI not found",
         )
 
+    from .rate_limit import acquire_grok_slot
+
+    try:
+        slot = acquire_grok_slot(tool="image_gen")
+    except RuntimeError as exc:
+        return MediaResult(
+            ok=False,
+            adapter="grok",
+            output_path=None,
+            mime_type="image/jpeg",
+            error=str(exc),
+            meta={"rate_limited": True},
+        )
+
     schema = {
         "type": "object",
         "required": ["image_path", "ok"],
@@ -147,5 +161,5 @@ def generate_image(
         mime_type="image/jpeg",
         width=width,
         height=height,
-        meta={"tool": "image_gen", "provider": "grok"},
+        meta={"tool": "image_gen", "provider": "grok", "rate_limit": slot},
     )

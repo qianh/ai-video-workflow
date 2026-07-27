@@ -33,6 +33,11 @@ def synthesize_speech(
     if allow_mock():
         return _mock_wav(dest, text)
 
+    # Prefer registered CosyVoice3 when ready (ADR-007).
+    cosy = _try_cosyvoice(dest, text=text, voice=voice)
+    if cosy is not None:
+        return cosy
+
     say = shutil.which("say")
     ffmpeg = which_ffmpeg()
     if say and ffmpeg:
@@ -106,6 +111,61 @@ def synthesize_speech(
         output_path=None,
         mime_type="audio/wav",
         error="no TTS backend (say/ffmpeg/cosyvoice)",
+    )
+
+
+def _try_cosyvoice(
+    dest: Path, *, text: str, voice: str | None
+) -> MediaResult | None:
+    """Invoke CosyVoice CLI if registered. Contract:
+
+    WORKFLOW_COSYVOICE_BIN <out_wav> --text "..." [--voice name]
+    Exit 0 and write dest path.
+    """
+    try:
+        from .components import cosyvoice_binary
+    except Exception:
+        return None
+    binary = cosyvoice_binary()
+    if not binary:
+        return None
+    cmd = [binary, str(dest), "--text", text[:2000]]
+    if voice:
+        cmd.extend(["--voice", voice])
+    try:
+        completed = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=120, check=False
+        )
+    except Exception as exc:
+        return MediaResult(
+            ok=False,
+            adapter="cosyvoice3",
+            output_path=None,
+            mime_type="audio/wav",
+            error=str(exc)[:400],
+        )
+    if completed.returncode != 0 or not dest.is_file():
+        return MediaResult(
+            ok=False,
+            adapter="cosyvoice3",
+            output_path=None,
+            mime_type="audio/wav",
+            error=(completed.stderr or "cosyvoice failed")[-400:],
+        )
+    duration_ms = max(800, min(30000, len(text) * 80))
+    try:
+        from .ffmpeg_pipeline import probe_duration_ms
+
+        duration_ms = probe_duration_ms(dest) or duration_ms
+    except Exception:
+        pass
+    return MediaResult(
+        ok=True,
+        adapter="cosyvoice3",
+        output_path=dest,
+        mime_type="audio/wav",
+        duration_ms=duration_ms,
+        meta={"backend": "cosyvoice3"},
     )
 
 

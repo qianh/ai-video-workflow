@@ -276,6 +276,8 @@ class SidecarRuntime:
             or request.method.startswith("export.")
             or request.method.startswith("cover.")
             or request.method.startswith("lipsync.")
+            or request.method.startswith("components.")
+            or request.method.startswith("grok.")
         ):
             await self._execute_m34(request)
             return
@@ -746,6 +748,37 @@ class SidecarRuntime:
                 raise ValueError("capability must be a string")
             self._emit(success_response(request.id, self._awap().probe(capability)))
             return
+        if method == "components.probe":
+            from .adapters.components import probe_components
+
+            self._emit(success_response(request.id, probe_components()))
+            return
+        if method == "components.guide":
+            from .adapters.components import install_guide
+
+            self._emit(success_response(request.id, install_guide()))
+            return
+        if method == "components.register":
+            from .adapters.components import register_component
+
+            component = p.get("component")
+            binary = p.get("binary")
+            if not isinstance(component, str) or not isinstance(binary, str):
+                raise ValueError("component and binary must be strings")
+            self._emit(
+                success_response(
+                    request.id,
+                    register_component(
+                        component, binary=binary, version=p.get("version")
+                    ),
+                )
+            )
+            return
+        if method == "grok.rate_status":
+            from .adapters.rate_limit import rate_limit_status
+
+            self._emit(success_response(request.id, rate_limit_status()))
+            return
         if method == "awap.route":
             capability = p.get("capability")
             if not isinstance(capability, str):
@@ -795,6 +828,22 @@ class SidecarRuntime:
             self._emit(
                 success_response(
                     request.id, {"assets": self._assets().list_assets(limit=limit)}
+                )
+            )
+            return
+        if method == "asset.preview":
+            asset_id = p.get("asset_id")
+            if not isinstance(asset_id, str):
+                raise ValueError("asset_id must be a string")
+            max_inline = p.get("max_inline_bytes", 1_500_000)
+            if isinstance(max_inline, bool) or not isinstance(max_inline, int):
+                raise ValueError("max_inline_bytes must be an integer")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._assets().preview_asset(
+                        asset_id, max_inline_bytes=max_inline
+                    ),
                 )
             )
             return
@@ -1103,6 +1152,94 @@ class SidecarRuntime:
                 success_response(
                     request.id, self._post().create_timeline(episode_id=episode_id)
                 )
+            )
+            return
+        if method == "timeline.list":
+            limit = p.get("limit", 50)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            episode_id = p.get("episode_id")
+            if episode_id is not None and not isinstance(episode_id, str):
+                raise ValueError("episode_id must be a string")
+            self._emit(
+                success_response(
+                    request.id,
+                    {
+                        "timelines": self._post().list_timelines(
+                            episode_id=episode_id, limit=limit
+                        )
+                    },
+                )
+            )
+            return
+        if method == "timeline.get":
+            timeline_id = p.get("timeline_id")
+            if not isinstance(timeline_id, str):
+                raise ValueError("timeline_id must be a string")
+            self._emit(
+                success_response(request.id, self._post().get_timeline(timeline_id))
+            )
+            return
+        if method == "timeline.get_revision":
+            revision_id = p.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            self._emit(
+                success_response(
+                    request.id, self._post().get_timeline_revision(revision_id)
+                )
+            )
+            return
+        if method == "timeline.update_clip":
+            clip_id = p.get("clip_id")
+            if not isinstance(clip_id, str):
+                raise ValueError("clip_id must be a string")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._post().update_clip(
+                        clip_id,
+                        start_ms=p.get("start_ms"),
+                        end_ms=p.get("end_ms"),
+                        source_in_ms=p.get("source_in_ms"),
+                        source_out_ms=p.get("source_out_ms"),
+                    ),
+                )
+            )
+            return
+        if method == "timeline.reorder_clips":
+            track_id = p.get("track_id")
+            clip_ids = p.get("clip_ids")
+            if not isinstance(track_id, str):
+                raise ValueError("track_id must be a string")
+            if not isinstance(clip_ids, list) or not all(
+                isinstance(x, str) for x in clip_ids
+            ):
+                raise ValueError("clip_ids must be a list of strings")
+            self._emit(
+                success_response(
+                    request.id, self._post().reorder_clips(track_id, clip_ids)
+                )
+            )
+            return
+        if method == "timeline.move_clip":
+            clip_id = p.get("clip_id")
+            direction = p.get("direction", "up")
+            if not isinstance(clip_id, str) or not isinstance(direction, str):
+                raise ValueError("clip_id and direction must be strings")
+            self._emit(
+                success_response(
+                    request.id,
+                    self._post().move_clip(clip_id, direction=direction),
+                )
+            )
+            return
+        if method == "timeline.delete_clip":
+            clip_id = p.get("clip_id")
+            if not isinstance(clip_id, str):
+                raise ValueError("clip_id must be a string")
+            self._emit(
+                success_response(request.id, self._post().delete_clip(clip_id))
             )
             return
         if method == "timeline.assemble":
@@ -3102,17 +3239,16 @@ class SidecarRuntime:
             if not isinstance(relative, str):
                 raise ValueError("relative must be a string")
             resolved = resolve_project_path(root, relative)
-            self._emit(
-                success_response(
-                    request.id,
-                    {
-                        "relative": to_project_relative(root, resolved),
-                        "exists": resolved.exists(),
-                        "is_file": resolved.is_file(),
-                        "is_dir": resolved.is_dir(),
-                    },
-                )
-            )
+            payload: dict[str, object] = {
+                "relative": to_project_relative(root, resolved),
+                "exists": resolved.exists(),
+                "is_file": resolved.is_file(),
+                "is_dir": resolved.is_dir(),
+            }
+            # Absolute path is safe: resolve_project_path already confines to root.
+            if bool(params.get("include_absolute")):
+                payload["absolute_path"] = str(resolved.resolve())
+            self._emit(success_response(request.id, payload))
             return
 
         if method == "fs.hash":

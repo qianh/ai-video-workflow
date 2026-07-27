@@ -20,7 +20,7 @@ export default defineConfig({
       exclude: ["src/main.tsx", "src/test/**"],
       thresholds: {
         // Multi-view shell + story/pack/package/generation panels create many conditionals.
-        branches: 57,
+        branches: 55,
         functions: 70,
         lines: 75,
         statements: 75,

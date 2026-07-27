@@ -53,7 +53,10 @@
 确认门 RPC：`gate.evaluate` / `confirm` / `get` / `list` / `status`；`trial.bootstrap` / `bootstrap_pipeline`。  
 验收 RPC：`trial.accept_m5` / `acceptance.run`（`mode=all|pilot|series|scale`，默认 mock 渲染；可选 `series_episodes` / `scale_episodes` / `shot_count`）。  
 AWAP RPC：`awap.catalog` / `probe` / `route`。  
-资产 RPC：`asset.create` / `list` / `lock` / `confirm_license`。  
+资产 RPC：`asset.create` / `list` / `preview` / `lock` / `confirm_license`。  
+时间线编辑：`timeline.list` / `get` / `get_revision` / `update_clip` / `reorder_clips` / `move_clip` / `delete_clip`。  
+组件/限流：`components.probe` / `guide` / `register`；`grok.rate_status`（`WORKFLOW_GROK_MAX_CALLS` / `WORKFLOW_GROK_MIN_INTERVAL_MS`）。  
+CosyVoice：`WORKFLOW_COSYVOICE_BIN` 或 `components.register`；未就绪时回退 macOS say。  
 分镜 RPC：`storyboard.create` / `generate_shots` / `confirm` / `list` / `get`。  
 生产 RPC：`production.batch` / `list` / `mark_stale` / `lock`；`qc.list_reviews` / `resolve`。  
 后期 RPC：`tts.authorize` / `synthesize`；`lipsync.plan`；`caption.*`；`music.*`；`timeline.*`；`mix.create`；`render.timeline`；`cover.create`；`export.episode`。  

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import uuid
@@ -162,6 +163,56 @@ class AssetService:
             "SELECT id FROM assets ORDER BY created_at DESC LIMIT ?", (limit,)
         )
         return [self.get_asset(row["id"]) for row in rows]
+
+    def preview_asset(
+        self,
+        asset_id: str,
+        *,
+        max_inline_bytes: int = 1_500_000,
+    ) -> dict[str, Any]:
+        """Return inline data URL for small media, else absolute project path."""
+        if max_inline_bytes < 1024 or max_inline_bytes > 8_000_000:
+            raise ValueError("max_inline_bytes must be between 1024 and 8000000")
+        asset = self.get_asset(asset_id)
+        if not asset["files"]:
+            raise ValueError("asset has no files")
+        file_meta = asset["files"][0]
+        rel = file_meta["relative_path"]
+        path = self._root / rel
+        if not path.is_file():
+            raise ValueError(f"asset file missing: {rel}")
+        size = path.stat().st_size
+        mime = file_meta.get("mime_type") or "application/octet-stream"
+        absolute = str(path.resolve())
+        base = {
+            "asset_id": asset_id,
+            "title": asset["title"],
+            "asset_type": asset["asset_type"],
+            "relative_path": rel,
+            "absolute_path": absolute,
+            "mime_type": mime,
+            "byte_size": size,
+        }
+        # Prefer inline preview for images and tiny audio
+        if size <= max_inline_bytes and (
+            asset["asset_type"] in {"image", "audio", "subtitle"}
+            or mime.startswith("image/")
+            or mime.startswith("audio/")
+            or mime.startswith("text/")
+        ):
+            data = path.read_bytes()
+            b64 = base64.b64encode(data).decode("ascii")
+            return {
+                **base,
+                "mode": "data_url",
+                "data_url": f"data:{mime};base64,{b64}",
+            }
+        return {
+            **base,
+            "mode": "path",
+            "data_url": None,
+            "note": "file too large for inline preview; use absolute_path",
+        }
 
     def link_asset(
         self,

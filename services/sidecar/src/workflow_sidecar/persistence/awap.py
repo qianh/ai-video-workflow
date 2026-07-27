@@ -265,6 +265,14 @@ class AwapService:
                 }
             return "degraded", {"reason": "CLI missing; mock available"}
         if capability == "tts.synthesize":
+            try:
+                from ..adapters.components import cosyvoice_binary
+
+                cosy = cosyvoice_binary()
+            except Exception:
+                cosy = None
+            if cosy:
+                return "ready", {"backend": "cosyvoice3", "binary": cosy}
             if shutil.which("say") and shutil.which("ffmpeg"):
                 return "ready", {
                     "backend": "macos_say",

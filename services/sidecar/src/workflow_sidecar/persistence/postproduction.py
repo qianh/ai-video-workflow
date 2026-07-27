@@ -519,6 +519,195 @@ class PostProductionService:
             "updated_at": row["updated_at"],
         }
 
+    def list_timelines(
+        self, *, episode_id: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        if limit < 1 or limit > 200:
+            raise ValueError("limit must be between 1 and 200")
+        if episode_id is not None:
+            rows = self._db.fetchall(
+                """
+                SELECT id FROM timelines
+                WHERE episode_id = ?
+                ORDER BY created_at DESC LIMIT ?
+                """,
+                (episode_id, limit),
+            )
+        else:
+            rows = self._db.fetchall(
+                "SELECT id FROM timelines ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+        return [self.get_timeline(row["id"]) for row in rows]
+
+    def update_clip(
+        self,
+        clip_id: str,
+        *,
+        start_ms: int | None = None,
+        end_ms: int | None = None,
+        source_in_ms: int | None = None,
+        source_out_ms: int | None = None,
+    ) -> dict[str, Any]:
+        row = self._db.fetchone(
+            "SELECT * FROM timeline_clips WHERE id = ?", (clip_id,)
+        )
+        if row is None:
+            raise ValueError("clip not found")
+        start = int(row["start_ms"]) if start_ms is None else int(start_ms)
+        end = int(row["end_ms"]) if end_ms is None else int(end_ms)
+        src_in = int(row["source_in_ms"]) if source_in_ms is None else int(source_in_ms)
+        src_out = (
+            row["source_out_ms"]
+            if source_out_ms is None
+            else int(source_out_ms)
+        )
+        if end <= start:
+            raise ValueError("end_ms must be greater than start_ms")
+        if start < 0 or src_in < 0:
+            raise ValueError("start times must be non-negative")
+        self._db.execute(
+            """
+            UPDATE timeline_clips
+            SET start_ms = ?, end_ms = ?, source_in_ms = ?, source_out_ms = ?
+            WHERE id = ?
+            """,
+            (start, end, src_in, src_out, clip_id),
+        )
+        self._db.commit()
+        track = self._db.fetchone(
+            "SELECT timeline_revision_id FROM timeline_tracks WHERE id = ?",
+            (row["track_id"],),
+        )
+        if track:
+            self._recompute_duration(track["timeline_revision_id"])
+        return self._get_clip(clip_id)
+
+    def reorder_clips(self, track_id: str, clip_ids: list[str]) -> dict[str, Any]:
+        if not clip_ids:
+            raise ValueError("clip_ids must be non-empty")
+        track = self._db.fetchone(
+            "SELECT * FROM timeline_tracks WHERE id = ?", (track_id,)
+        )
+        if track is None:
+            raise ValueError("track not found")
+        existing = self._db.fetchall(
+            "SELECT id FROM timeline_clips WHERE track_id = ?", (track_id,)
+        )
+        existing_ids = {r["id"] for r in existing}
+        if set(clip_ids) != existing_ids:
+            raise ValueError("clip_ids must be a permutation of track clips")
+        cursor = 0
+        for cid in clip_ids:
+            clip = self._db.fetchone(
+                "SELECT * FROM timeline_clips WHERE id = ?", (cid,)
+            )
+            duration = int(clip["end_ms"]) - int(clip["start_ms"])
+            duration = max(1, duration)
+            self._db.execute(
+                """
+                UPDATE timeline_clips
+                SET start_ms = ?, end_ms = ?
+                WHERE id = ?
+                """,
+                (cursor, cursor + duration, cid),
+            )
+            cursor += duration
+        self._db.commit()
+        self._recompute_duration(track["timeline_revision_id"])
+        return self.get_timeline_revision(track["timeline_revision_id"])
+
+    def delete_clip(self, clip_id: str) -> dict[str, Any]:
+        row = self._db.fetchone(
+            "SELECT * FROM timeline_clips WHERE id = ?", (clip_id,)
+        )
+        if row is None:
+            raise ValueError("clip not found")
+        track_id = row["track_id"]
+        track = self._db.fetchone(
+            "SELECT timeline_revision_id FROM timeline_tracks WHERE id = ?",
+            (track_id,),
+        )
+        self._db.execute("DELETE FROM timeline_clips WHERE id = ?", (clip_id,))
+        self._db.commit()
+        if track:
+            # compact remaining clips on track
+            remaining = self._db.fetchall(
+                """
+                SELECT id FROM timeline_clips
+                WHERE track_id = ? ORDER BY start_ms ASC
+                """,
+                (track_id,),
+            )
+            if remaining:
+                self.reorder_clips(track_id, [r["id"] for r in remaining])
+            else:
+                self._recompute_duration(track["timeline_revision_id"])
+            return self.get_timeline_revision(track["timeline_revision_id"])
+        return {"deleted": clip_id}
+
+    def move_clip(self, clip_id: str, *, direction: str) -> dict[str, Any]:
+        if direction not in {"up", "down"}:
+            raise ValueError("direction must be up or down")
+        row = self._db.fetchone(
+            "SELECT * FROM timeline_clips WHERE id = ?", (clip_id,)
+        )
+        if row is None:
+            raise ValueError("clip not found")
+        siblings = self._db.fetchall(
+            """
+            SELECT id FROM timeline_clips
+            WHERE track_id = ? ORDER BY start_ms ASC
+            """,
+            (row["track_id"],),
+        )
+        ids = [s["id"] for s in siblings]
+        idx = ids.index(clip_id)
+        if direction == "up" and idx > 0:
+            ids[idx - 1], ids[idx] = ids[idx], ids[idx - 1]
+        elif direction == "down" and idx < len(ids) - 1:
+            ids[idx + 1], ids[idx] = ids[idx], ids[idx + 1]
+        return self.reorder_clips(row["track_id"], ids)
+
+    def _get_clip(self, clip_id: str) -> dict[str, Any]:
+        c = self._db.fetchone(
+            "SELECT * FROM timeline_clips WHERE id = ?", (clip_id,)
+        )
+        if c is None:
+            raise ValueError("clip not found")
+        return {
+            "id": c["id"],
+            "track_id": c["track_id"],
+            "asset_file_id": c["asset_file_id"],
+            "shot_revision_id": c["shot_revision_id"],
+            "start_ms": int(c["start_ms"]),
+            "end_ms": int(c["end_ms"]),
+            "source_in_ms": int(c["source_in_ms"]),
+            "source_out_ms": c["source_out_ms"],
+            "params": json.loads(c["params_json"] or "{}"),
+        }
+
+    def _recompute_duration(self, timeline_revision_id: str) -> None:
+        rows = self._db.fetchall(
+            """
+            SELECT MAX(c.end_ms) AS m
+            FROM timeline_clips c
+            JOIN timeline_tracks t ON t.id = c.track_id
+            WHERE t.timeline_revision_id = ?
+            """,
+            (timeline_revision_id,),
+        )
+        duration = int(rows[0]["m"] or 0) if rows else 0
+        self._db.execute(
+            """
+            UPDATE timeline_revisions
+            SET duration_ms = ?, content_hash = ?
+            WHERE id = ?
+            """,
+            (duration, _hash({"duration_ms": duration}), timeline_revision_id),
+        )
+        self._db.commit()
+
     def get_timeline_revision(self, revision_id: str) -> dict[str, Any]:
         row = self._db.fetchone(
             "SELECT * FROM timeline_revisions WHERE id = ?", (revision_id,)

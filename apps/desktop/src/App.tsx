@@ -49,6 +49,9 @@ type ShellView =
   | "director"
   | "gates"
   | "production"
+  | "media"
+  | "timeline"
+  | "components"
   | "acceptance"
   | "drafts"
   | "generation"
@@ -239,6 +242,37 @@ export function App({
     openReviews: number;
     capabilities: { capability: string; status: string }[];
   } | null>(null);
+  const [mediaItems, setMediaItems] = useState<
+    {
+      id: string;
+      title: string;
+      asset_type: string;
+      mime?: string;
+      relative?: string;
+      previewUrl?: string | null;
+    }[]
+  >([]);
+  const [mediaPreview, setMediaPreview] = useState<{
+    title: string;
+    dataUrl: string | null;
+    mime: string;
+    path: string;
+  } | null>(null);
+  const [timelineEditor, setTimelineEditor] = useState<{
+    timelineId: string;
+    revisionId: string;
+    durationMs: number;
+    clips: { id: string; start_ms: number; end_ms: number; label: string }[];
+  } | null>(null);
+  const [componentStatus, setComponentStatus] = useState<{
+    cosy: string;
+    muse: string;
+    ttsFallback: string;
+    rateCalls: number;
+    rateBudget: number;
+    guide: string[];
+  } | null>(null);
+
 
 
   const refreshStatus = useCallback(async () => {
@@ -844,6 +878,164 @@ export function App({
     }
   };
 
+
+
+  const loadMediaBrowser = async () => {
+    setBusy("media-browser");
+    try {
+      const listed = await api.request("asset.list", { limit: 40 }, requestId("asset-list"));
+      const assets = (listed.assets as Array<Record<string, unknown>> | undefined) ?? [];
+      const items: {
+        id: string;
+        title: string;
+        asset_type: string;
+        mime?: string;
+        relative?: string;
+        previewUrl?: string | null;
+      }[] = [];
+      for (const asset of assets.slice(0, 24)) {
+        const id = String(asset.id ?? "");
+        const files = (asset.files as Array<Record<string, unknown>> | undefined) ?? [];
+        const file0 = files[0];
+        let previewUrl: string | null = null;
+        if (id && (asset.asset_type === "image" || asset.asset_type === "audio")) {
+          try {
+            const prev = await api.request(
+              "asset.preview",
+              { asset_id: id },
+              requestId(`asset-prev-${id.slice(0, 6)}`),
+            );
+            previewUrl = prev.data_url ? String(prev.data_url) : null;
+          } catch {
+            previewUrl = null;
+          }
+        }
+        items.push({
+          id,
+          title: String(asset.title ?? id.slice(0, 8)),
+          asset_type: String(asset.asset_type ?? "other"),
+          mime: file0 ? String(file0.mime_type ?? "") : undefined,
+          relative: file0 ? String(file0.relative_path ?? "") : undefined,
+          previewUrl,
+        });
+      }
+      setMediaItems(items);
+      setNotice({ tone: "success", text: `资产浏览器 · ${items.length} 项` });
+      setView("media");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const openMediaPreview = async (assetId: string) => {
+    setBusy("media-preview");
+    try {
+      const prev = await api.request(
+        "asset.preview",
+        { asset_id: assetId },
+        requestId("asset-preview"),
+      );
+      setMediaPreview({
+        title: String(prev.title ?? assetId.slice(0, 8)),
+        dataUrl: prev.data_url ? String(prev.data_url) : null,
+        mime: String(prev.mime_type ?? ""),
+        path: String(prev.relative_path ?? prev.absolute_path ?? ""),
+      });
+      setView("media");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const loadTimelineEditor = async () => {
+    setBusy("timeline-editor");
+    try {
+      let listed = await api.request("timeline.list", { limit: 10 }, requestId("tl-list"));
+      let timelines = (listed.timelines as Array<Record<string, unknown>> | undefined) ?? [];
+      if (timelines.length === 0) {
+        await api.request(
+          "timeline.create",
+          { episode_id: "ui-episode" },
+          requestId("tl-create"),
+        );
+        listed = await api.request("timeline.list", { limit: 10 }, requestId("tl-list-2"));
+        timelines = (listed.timelines as Array<Record<string, unknown>> | undefined) ?? [];
+      }
+      const tl = timelines[0];
+      if (!tl) throw new Error("no timeline");
+      const rev = (tl.current_revision as Record<string, unknown> | undefined) ?? {};
+      const tracks = (rev.tracks as Array<Record<string, unknown>> | undefined) ?? [];
+      const video = tracks.find((track) => track.track_type === "video") ?? tracks[0];
+      const rawClips = (video?.clips as Array<Record<string, unknown>> | undefined) ?? [];
+      setTimelineEditor({
+        timelineId: String(tl.id ?? ""),
+        revisionId: String(rev.id ?? ""),
+        durationMs: Number(rev.duration_ms ?? 0),
+        clips: rawClips.map((clip, index) => ({
+          id: String(clip.id ?? index),
+          start_ms: Number(clip.start_ms ?? 0),
+          end_ms: Number(clip.end_ms ?? 0),
+          label: String(clip.shot_revision_id ?? `clip-${index + 1}`).slice(0, 12),
+        })),
+      });
+      setNotice({
+        tone: "success",
+        text: `时间线 · clips=${rawClips.length} duration=${String(rev.duration_ms ?? 0)}ms`,
+      });
+      setView("timeline");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const moveTimelineClip = async (clipId: string, direction: "up" | "down") => {
+    setBusy("timeline-move");
+    try {
+      await api.request(
+        "timeline.move_clip",
+        { clip_id: clipId, direction },
+        requestId("tl-move"),
+      );
+      await loadTimelineEditor();
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+      setBusy(null);
+    }
+  };
+
+  const loadComponents = async () => {
+    setBusy("components");
+    try {
+      const probe = await api.request("components.probe", {}, requestId("comp-probe"));
+      const guide = await api.request("components.guide", {}, requestId("comp-guide"));
+      const rate = await api.request("grok.rate_status", {}, requestId("grok-rate"));
+      const comps = (probe.components as Record<string, Record<string, unknown>> | undefined) ?? {};
+      const fallbacks = (probe.fallbacks as Record<string, string> | undefined) ?? {};
+      setComponentStatus({
+        cosy: String(comps.cosyvoice3?.status ?? "unknown"),
+        muse: String(comps.musetalk?.status ?? "unknown"),
+        ttsFallback: String(fallbacks.tts ?? "unknown"),
+        rateCalls: Number(rate.calls ?? 0),
+        rateBudget: Number(rate.budget ?? 0),
+        guide: ((guide.steps as string[] | undefined) ?? []).map(String),
+      });
+      setNotice({
+        tone: "success",
+        text: `组件 · cosy=${String(comps.cosyvoice3?.status)} muse=${String(comps.musetalk?.status)} grok_calls=${String(rate.calls)}/${String(rate.budget)}`,
+      });
+      setView("components");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const loadProductionWorkspace = async () => {
     setBusy("production-workspace");
@@ -1967,6 +2159,9 @@ export function App({
     { id: "director", label: "导演栈" },
     { id: "gates", label: "确认门" },
     { id: "production", label: "生产交付" },
+    { id: "media", label: "资产预览" },
+    { id: "timeline", label: "时间线" },
+    { id: "components", label: "组件/限流" },
     { id: "acceptance", label: "M5 验收" },
     { id: "drafts", label: "草稿修订" },
     { id: "generation", label: "生成流水线" },
@@ -2481,6 +2676,230 @@ export function App({
               </p>
             </>
           )}
+        </section>
+      )}
+
+
+      {view === "media" && (
+        <section className="console-panel" aria-label="资产预览">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">MEDIA PREVIEW</p>
+              <h3>资产浏览器与预览</h3>
+            </div>
+            <span className="panel-number">P-1</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="刷新资产列表"
+                  className="action primary"
+                  onClick={() => void loadMediaBrowser()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">M1</span>
+                  <span>
+                    <strong>刷新资产</strong>
+                    <small>asset.list + preview</small>
+                  </span>
+                </button>
+              </div>
+              {mediaItems.length === 0 ? (
+                <p className="empty-hint">暂无资产。先跑生产流水线生成镜头/音频。</p>
+              ) : (
+                <ul className="job-list" aria-label="资产列表">
+                  {mediaItems.map((item) => (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        className="linkish"
+                        aria-label={`预览资产 ${item.title}`}
+                        onClick={() => void openMediaPreview(item.id)}
+                        disabled={busy !== null}
+                      >
+                        <code>{item.asset_type}</code> {item.title}
+                      </button>
+                      {item.previewUrl && item.asset_type === "image" ? (
+                        <img
+                          src={item.previewUrl}
+                          alt={item.title}
+                          style={{ maxWidth: 72, maxHeight: 72, display: "block", marginTop: 6 }}
+                        />
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {mediaPreview ? (
+                <div aria-label="当前预览">
+                  <h4>预览 · {mediaPreview.title}</h4>
+                  <p className="project-meta">
+                    <code>{mediaPreview.path}</code> · {mediaPreview.mime}
+                  </p>
+                  {mediaPreview.dataUrl && mediaPreview.mime.startsWith("image/") ? (
+                    <img
+                      src={mediaPreview.dataUrl}
+                      alt={mediaPreview.title}
+                      style={{ maxWidth: "100%", maxHeight: 360, borderRadius: 8 }}
+                    />
+                  ) : null}
+                  {mediaPreview.dataUrl && mediaPreview.mime.startsWith("audio/") ? (
+                    <audio controls src={mediaPreview.dataUrl} aria-label="音频预览" />
+                  ) : null}
+                  {!mediaPreview.dataUrl ? (
+                    <p className="empty-hint">文件过大未内联，路径：{mediaPreview.path}</p>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          )}
+        </section>
+      )}
+
+      {view === "timeline" && (
+        <section className="console-panel" aria-label="时间线编辑">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">TIMELINE LIST EDITOR</p>
+              <h3>时间线片段列表</h3>
+            </div>
+            <span className="panel-number">P-2</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="加载时间线"
+                  className="action primary"
+                  onClick={() => void loadTimelineEditor()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">T1</span>
+                  <span>
+                    <strong>加载时间线</strong>
+                    <small>list · move · duration</small>
+                  </span>
+                </button>
+              </div>
+              {!timelineEditor ? (
+                <p className="empty-hint">尚未加载时间线。</p>
+              ) : (
+                <>
+                  <p className="project-meta">
+                    时长 <strong>{timelineEditor.durationMs} ms</strong> · revision{" "}
+                    <code>{timelineEditor.revisionId.slice(0, 8)}</code>
+                  </p>
+                  {timelineEditor.clips.length === 0 ? (
+                    <p className="empty-hint">
+                      无片段。请先跑流水线 assemble 分镜到时间线。
+                    </p>
+                  ) : (
+                    <ul className="job-list" aria-label="时间线片段列表">
+                      {timelineEditor.clips.map((clip) => (
+                        <li key={clip.id}>
+                          <code>
+                            {clip.start_ms}-{clip.end_ms}
+                          </code>{" "}
+                          {clip.label}{" "}
+                          <button
+                            type="button"
+                            aria-label={`上移片段 ${clip.label}`}
+                            onClick={() => void moveTimelineClip(clip.id, "up")}
+                            disabled={busy !== null}
+                          >
+                            ↑
+                          </button>{" "}
+                          <button
+                            type="button"
+                            aria-label={`下移片段 ${clip.label}`}
+                            onClick={() => void moveTimelineClip(clip.id, "down")}
+                            disabled={busy !== null}
+                          >
+                            ↓
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
+            </>
+          )}
+        </section>
+      )}
+
+      {view === "components" && (
+        <section className="console-panel" aria-label="组件与限流">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">COMPONENTS · RATE LIMIT</p>
+              <h3>本地组件与 Grok 成本控制</h3>
+            </div>
+            <span className="panel-number">P-3/4</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">可无项目时也可探测组件；建议先打开项目。</p>
+          ) : null}
+          <div className="action-grid compact">
+            <button
+              aria-label="探测组件与限流"
+              className="action primary"
+              onClick={() => void loadComponents()}
+              disabled={busy !== null}
+            >
+              <span className="action-no">K1</span>
+              <span>
+                <strong>探测组件 / 限流</strong>
+                <small>cosyvoice · musetalk · grok budget</small>
+              </span>
+            </button>
+          </div>
+          {!componentStatus ? (
+            <p className="empty-hint">尚未探测。</p>
+          ) : (
+            <div className="overview-columns">
+              <div>
+                <h4>组件</h4>
+                <ul className="job-list" aria-label="组件状态">
+                  <li>
+                    CosyVoice3 <code>{componentStatus.cosy}</code>
+                  </li>
+                  <li>
+                    MuseTalk <code>{componentStatus.muse}</code>
+                  </li>
+                  <li>
+                    TTS 回退 <code>{componentStatus.ttsFallback}</code>
+                  </li>
+                </ul>
+              </div>
+              <div>
+                <h4>Grok 限流</h4>
+                <ul className="job-list" aria-label="Grok 限流状态">
+                  <li>
+                    调用 {componentStatus.rateCalls} / 预算 {componentStatus.rateBudget}
+                  </li>
+                  <li>
+                    env: WORKFLOW_GROK_MAX_CALLS · WORKFLOW_GROK_MIN_INTERVAL_MS
+                  </li>
+                </ul>
+              </div>
+            </div>
+          )}
+          {componentStatus?.guide?.length ? (
+            <>
+              <h4>CosyVoice 安装指引</h4>
+              <ol aria-label="CosyVoice 安装步骤">
+                {componentStatus.guide.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ol>
+            </>
+          ) : null}
         </section>
       )}
 

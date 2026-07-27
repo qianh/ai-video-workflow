@@ -617,6 +617,101 @@ describe("M1 shell", () => {
     expect(screen.getByLabelText("能力矩阵")).toHaveTextContent("ready");
   });
 
+
+  it("loads media browser and component probe", async () => {
+    const api = createApi({
+      request: vi.fn().mockImplementation(async (method: string) => {
+        if (method === "project.current") {
+          return {
+            project: {
+              id: "p1",
+              name: "试播项目",
+              root_path: "/tmp/demo",
+              schema_version: 16,
+            },
+          };
+        }
+        if (method === "project.list_recent") return { projects: [] };
+        if (method === "job.list") return { jobs: [] };
+        if (method === "project.overview") return emptyOverview;
+        if (method === "asset.list") {
+          return {
+            assets: [
+              {
+                id: "a1",
+                title: "still-1",
+                asset_type: "image",
+                files: [{ relative_path: "assets/images/a.jpg", mime_type: "image/jpeg" }],
+              },
+            ],
+          };
+        }
+        if (method === "asset.preview") {
+          return {
+            title: "still-1",
+            mode: "data_url",
+            data_url: "data:image/jpeg;base64,abc",
+            mime_type: "image/jpeg",
+            relative_path: "assets/images/a.jpg",
+          };
+        }
+        if (method === "components.probe") {
+          return {
+            components: {
+              cosyvoice3: { status: "not_installed" },
+              musetalk: { status: "not_installed" },
+            },
+            fallbacks: { tts: "macos_say" },
+          };
+        }
+        if (method === "components.guide") {
+          return { steps: ["install cosyvoice", "register binary"] };
+        }
+        if (method === "grok.rate_status") {
+          return { calls: 0, budget: 50 };
+        }
+        if (method === "timeline.list") {
+          return {
+            timelines: [
+              {
+                id: "tl1",
+                current_revision: {
+                  id: "rev1",
+                  duration_ms: 3000,
+                  tracks: [
+                    {
+                      track_type: "video",
+                      clips: [
+                        { id: "c1", start_ms: 0, end_ms: 1000, shot_revision_id: "s1" },
+                        { id: "c2", start_ms: 1000, end_ms: 2000, shot_revision_id: "s2" },
+                      ],
+                    },
+                  ],
+                },
+              },
+            ],
+          };
+        }
+        if (method === "timeline.move_clip") {
+          return { tracks: [] };
+        }
+        return { status: "ok" };
+      }),
+    });
+    const user = userEvent.setup();
+    render(<App api={api} showDiagnostics />);
+    await user.click(await screen.findByRole("button", { name: "资产预览" }));
+    await user.click(await screen.findByRole("button", { name: "刷新资产列表" }));
+    expect(await screen.findByLabelText("资产列表")).toHaveTextContent("still-1");
+    await user.click(await screen.findByRole("button", { name: "时间线" }));
+    await user.click(await screen.findByRole("button", { name: "加载时间线" }));
+    expect(await screen.findByLabelText("时间线片段列表")).toHaveTextContent("0-1000");
+    await user.click(await screen.findByRole("button", { name: "组件/限流" }));
+    await user.click(await screen.findByRole("button", { name: "探测组件与限流" }));
+    expect(await screen.findByLabelText("组件状态")).toHaveTextContent("not_installed");
+    expect(screen.getByLabelText("Grok 限流状态")).toHaveTextContent("50");
+  });
+
   it("runs M5 continuous acceptance and shows grade", async () => {
     const api = createApi({
       request: vi.fn().mockImplementation(async (method: string) => {
