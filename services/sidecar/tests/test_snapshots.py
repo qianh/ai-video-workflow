@@ -52,7 +52,7 @@ def test_apply_migrations_idempotent_after_snapshot(tmp_path: Path) -> None:
     db_path = tmp_path / "project.db"
     db = open_database(db_path)
     v1 = apply_migrations(db, PROJECT_MIGRATIONS)
-    assert v1 == current_version(db) >= 2
+    assert v1 == current_version(db) >= 3
     v2 = apply_migrations(db, PROJECT_MIGRATIONS)
     assert v2 == v1
     db.close()

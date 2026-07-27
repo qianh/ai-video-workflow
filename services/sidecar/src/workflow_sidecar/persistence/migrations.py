@@ -160,6 +160,81 @@ PROJECT_MIGRATIONS: list[Migration] = [
         CREATE INDEX idx_event_edges_branch ON narrative_event_edges(branch_id);
         """,
     ),
+    (
+        3,
+        """
+        CREATE TABLE creative_packs (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            pack_type TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            archived INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE creative_pack_revisions (
+            id TEXT PRIMARY KEY,
+            pack_id TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            rules_json TEXT NOT NULL,
+            resources_json TEXT NOT NULL DEFAULT '{}',
+            content_hash TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(pack_id) REFERENCES creative_packs(id),
+            UNIQUE(pack_id, version)
+        );
+
+        CREATE TABLE creative_pack_compositions (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE creative_pack_composition_revisions (
+            id TEXT PRIMARY KEY,
+            composition_id TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            visual_revision_id TEXT NOT NULL,
+            narrative_revision_id TEXT NOT NULL,
+            technique_revision_ids_json TEXT NOT NULL,
+            resolution_order_json TEXT NOT NULL,
+            resolved_rules_json TEXT NOT NULL,
+            resource_hashes_json TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(composition_id) REFERENCES creative_pack_compositions(id),
+            UNIQUE(composition_id, version)
+        );
+
+        CREATE TABLE project_creative_pack_locks (
+            id TEXT PRIMARY KEY,
+            composition_revision_id TEXT NOT NULL,
+            composition_content_hash TEXT NOT NULL,
+            purpose TEXT NOT NULL,
+            locked_at TEXT NOT NULL,
+            FOREIGN KEY(composition_revision_id) REFERENCES creative_pack_composition_revisions(id)
+        );
+
+        CREATE TABLE creative_pack_evaluations (
+            id TEXT PRIMARY KEY,
+            composition_revision_id TEXT NOT NULL,
+            suite_id TEXT NOT NULL,
+            result TEXT NOT NULL,
+            structural_ok INTEGER NOT NULL,
+            rules_ok INTEGER NOT NULL,
+            notes_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(composition_revision_id) REFERENCES creative_pack_composition_revisions(id)
+        );
+
+        CREATE INDEX idx_pack_revisions_pack ON creative_pack_revisions(pack_id, version);
+        CREATE INDEX idx_composition_revisions ON creative_pack_composition_revisions(composition_id, version);
+        CREATE INDEX idx_pack_locks ON project_creative_pack_locks(locked_at DESC);
+        """,
+    ),
 ]
 
 

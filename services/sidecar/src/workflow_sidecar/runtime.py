@@ -21,6 +21,7 @@ from .persistence import (
 )
 from .persistence.overview import build_project_overview
 from .persistence.paths import file_sha256, resolve_project_path, to_project_relative
+from .persistence.creative_packs import CreativePackService
 from .persistence.story import StoryService
 from .protocol import Request, error_response, event, success_response
 
@@ -176,6 +177,10 @@ class SidecarRuntime:
             await self._execute_story(request)
             return
 
+        if request.method.startswith("pack."):
+            await self._execute_pack(request)
+            return
+
         if request.method.startswith("job."):
             await self._execute_job(request)
             return
@@ -225,6 +230,127 @@ class SidecarRuntime:
         return StoryService(
             self._workspace.require_project_db(),
             Path(current.root_path),
+        )
+
+    def _packs(self) -> CreativePackService:
+        self._workspace.require_project_db()
+        return CreativePackService(self._workspace.require_project_db())
+
+    async def _execute_pack(self, request: Request) -> None:
+        packs = self._packs()
+        method = request.method
+        params = request.params
+
+        if method == "pack.register":
+            name = params.get("name")
+            pack_type = params.get("pack_type")
+            scope = params.get("scope", "project")
+            rules = params.get("rules") or {}
+            resources = params.get("resources") or {}
+            if not isinstance(name, str) or not isinstance(pack_type, str):
+                raise ValueError("name and pack_type must be strings")
+            if not isinstance(scope, str):
+                raise ValueError("scope must be a string")
+            if not isinstance(rules, dict) or not isinstance(resources, dict):
+                raise ValueError("rules and resources must be objects")
+            result = packs.register_pack(
+                name=name,
+                pack_type=pack_type,
+                scope=scope,
+                rules=rules,
+                resources=resources,
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "pack.list":
+            self._emit(
+                success_response(request.id, {"packs": packs.list_packs()})
+            )
+            return
+
+        if method == "pack.publish_revision":
+            pack_id = params.get("pack_id")
+            rules = params.get("rules")
+            resources = params.get("resources") or {}
+            if not isinstance(pack_id, str):
+                raise ValueError("pack_id must be a string")
+            if not isinstance(rules, dict):
+                raise ValueError("rules must be an object")
+            if not isinstance(resources, dict):
+                raise ValueError("resources must be an object")
+            result = packs.publish_revision(
+                pack_id, rules=rules, resources=resources
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "pack.compose":
+            name = params.get("name")
+            visual_revision_id = params.get("visual_revision_id")
+            narrative_revision_id = params.get("narrative_revision_id")
+            technique_revision_ids = params.get("technique_revision_ids") or []
+            if not isinstance(name, str):
+                raise ValueError("name must be a string")
+            if not isinstance(visual_revision_id, str) or not isinstance(
+                narrative_revision_id, str
+            ):
+                raise ValueError("visual/narrative revision ids must be strings")
+            if not isinstance(technique_revision_ids, list):
+                raise ValueError("technique_revision_ids must be an array")
+            result = packs.compose(
+                name=name,
+                visual_revision_id=visual_revision_id,
+                narrative_revision_id=narrative_revision_id,
+                technique_revision_ids=technique_revision_ids,
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "pack.evaluate":
+            composition_revision_id = params.get("composition_revision_id")
+            suite_id = params.get("suite_id", "builtin-structure-v1")
+            if not isinstance(composition_revision_id, str):
+                raise ValueError("composition_revision_id must be a string")
+            if not isinstance(suite_id, str):
+                raise ValueError("suite_id must be a string")
+            result = packs.evaluate(
+                composition_revision_id, suite_id=suite_id
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "pack.lock":
+            composition_revision_id = params.get("composition_revision_id")
+            purpose = params.get("purpose", "production")
+            if not isinstance(composition_revision_id, str):
+                raise ValueError("composition_revision_id must be a string")
+            if not isinstance(purpose, str):
+                raise ValueError("purpose must be a string")
+            result = packs.lock(composition_revision_id, purpose=purpose)
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "pack.current_lock":
+            self._emit(
+                success_response(
+                    request.id, {"lock": packs.current_lock()}
+                )
+            )
+            return
+
+        if method == "pack.list_compositions":
+            self._emit(
+                success_response(
+                    request.id, {"compositions": packs.list_compositions()}
+                )
+            )
+            return
+
+        self._emit(
+            error_response(
+                request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
+            )
         )
 
     async def _execute_story(self, request: Request) -> None:

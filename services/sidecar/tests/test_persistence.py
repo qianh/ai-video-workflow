@@ -43,7 +43,7 @@ def test_create_open_close_project_uses_relative_layout(tmp_path: Path) -> None:
 
     reopened = service.open_project(root)
     assert reopened.id == created.id
-    assert reopened.schema_version >= 2
+    assert reopened.schema_version >= 3
 
     recent = service.list_recent()
     assert len(recent) == 1

@@ -36,7 +36,7 @@ type ProjectOverview = {
   snapshots: SnapshotInfo[];
   queue_depth: number;
 };
-type ShellView = "overview" | "project" | "story" | "jobs" | "link";
+type ShellView = "overview" | "project" | "story" | "packs" | "jobs" | "link";
 type StorySourceInfo = {
   id: string;
   title: string;
@@ -115,6 +115,10 @@ export function App({
   const [sources, setSources] = useState<StorySourceInfo[]>([]);
   const [chunks, setChunks] = useState<StoryChunkInfo[]>([]);
   const [storyEvents, setStoryEvents] = useState<StoryEventInfo[]>([]);
+  const [packLock, setPackLock] = useState<string | null>(null);
+  const [packCompositions, setPackCompositions] = useState<
+    { name: string; status: string; composition_revision_id: string }[]
+  >([]);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -174,8 +178,35 @@ export function App({
       setSources([]);
       setChunks([]);
       setStoryEvents([]);
+      setPackLock(null);
+      setPackCompositions([]);
     }
   }, [api]);
+
+  const refreshPackState = useCallback(async () => {
+    if (!project) {
+      setPackLock(null);
+      setPackCompositions([]);
+      return;
+    }
+    const lockResult = await api.request("pack.current_lock", {}, requestId("pack-lock"));
+    const lock = lockResult.lock as { id?: string } | null | undefined;
+    setPackLock(lock?.id ?? null);
+    const compositions = await api.request(
+      "pack.list_compositions",
+      {},
+      requestId("pack-compositions"),
+    );
+    setPackCompositions(
+      ((compositions.compositions as Array<Record<string, string>> | undefined) ?? []).map(
+        (item) => ({
+          name: String(item.name ?? ""),
+          status: String(item.status ?? ""),
+          composition_revision_id: String(item.composition_revision_id ?? ""),
+        }),
+      ),
+    );
+  }, [api, project]);
 
   const refreshStoryState = useCallback(async () => {
     if (!project) {
@@ -412,6 +443,71 @@ export function App({
     }
   };
 
+  const setupDefaultPacks = async () => {
+    setBusy("pack-setup");
+    try {
+      const visual = await api.request(
+        "pack.register",
+        {
+          name: "赛博夜景",
+          pack_type: "visual_style",
+          rules: { palette: "neon", hard_ratio: "9:16" },
+        },
+        requestId("pack-visual"),
+      );
+      const narrative = await api.request(
+        "pack.register",
+        {
+          name: "都市悬疑",
+          pack_type: "narrative_genre",
+          rules: { hooks: "mystery", pace: "fast" },
+        },
+        requestId("pack-narrative"),
+      );
+      const technique = await api.request(
+        "pack.register",
+        {
+          name: "Grok 图技",
+          pack_type: "model_technique",
+          rules: { prompt_prefix: "manhua" },
+          resources: { required: ["lut"], available: ["lut"] },
+        },
+        requestId("pack-technique"),
+      );
+      const composed = await api.request(
+        "pack.compose",
+        {
+          name: "夜市默认组合",
+          visual_revision_id: (visual.revision as { id: string }).id,
+          narrative_revision_id: (narrative.revision as { id: string }).id,
+          technique_revision_ids: [(technique.revision as { id: string }).id],
+        },
+        requestId("pack-compose"),
+      );
+      const compositionRevisionId = String(composed.composition_revision_id);
+      await api.request(
+        "pack.evaluate",
+        { composition_revision_id: compositionRevisionId },
+        requestId("pack-eval"),
+      );
+      const lock = await api.request(
+        "pack.lock",
+        { composition_revision_id: compositionRevisionId, purpose: "production" },
+        requestId("pack-lock-create"),
+      );
+      setNotice({
+        tone: "success",
+        text: `已锁定 Creative Pack：${String(lock.id).slice(0, 8)}…`,
+      });
+      await refreshPackState();
+      setView("packs");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const importAndSplitStory = async () => {
     setBusy("story-import");
     try {
@@ -486,6 +582,7 @@ export function App({
     { id: "overview", label: "项目总览" },
     { id: "project", label: "项目" },
     { id: "story", label: "故事" },
+    { id: "packs", label: "创作包" },
     { id: "jobs", label: "任务中心" },
     { id: "link", label: "链路诊断" },
   ];
@@ -794,6 +891,65 @@ export function App({
                   )}
                 </div>
               </div>
+            </>
+          )}
+        </section>
+      )}
+
+      {view === "packs" && (
+        <section className="console-panel" aria-label="创作包">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">CREATIVE PACK</p>
+              <h3>创作包锁定</h3>
+            </div>
+            <span className="panel-number">M2.03</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="注册并锁定默认组合"
+                  className="action primary"
+                  onClick={() => void setupDefaultPacks()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">C1</span>
+                  <span>
+                    <strong>注册并锁定默认组合</strong>
+                    <small>visual + narrative + technique</small>
+                  </span>
+                </button>
+                <button
+                  aria-label="刷新创作包"
+                  className="action"
+                  onClick={() => void refreshPackState()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">C2</span>
+                  <span>
+                    <strong>刷新状态</strong>
+                    <small>current lock + compositions</small>
+                  </span>
+                </button>
+              </div>
+              <p className="project-meta">
+                当前锁定：{" "}
+                <strong>{packLock ? packLock.slice(0, 12) + "…" : "未锁定"}</strong>
+              </p>
+              {packCompositions.length === 0 ? (
+                <p className="empty-hint">暂无组合修订</p>
+              ) : (
+                <ul className="job-list" aria-label="创作包组合列表">
+                  {packCompositions.map((item) => (
+                    <li key={item.composition_revision_id}>
+                      <code>{item.status}</code> {item.name}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </>
           )}
         </section>

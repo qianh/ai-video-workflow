@@ -37,6 +37,8 @@ function createApi(overrides: Partial<SidecarApi> = {}): SidecarApi {
       if (method === "project.list_recent") return { projects: [] };
       if (method === "job.list") return { jobs: [] };
       if (method === "project.overview") return emptyOverview;
+      if (method === "pack.current_lock") return { lock: null };
+      if (method === "pack.list_compositions") return { compositions: [] };
       return { status: "ok", protocol_version: 1, echo: null };
     }),
     cancel: vi.fn().mockResolvedValue(true),
@@ -361,6 +363,71 @@ describe("M1 shell", () => {
     });
     render(<App api={api} showDiagnostics />);
     expect(await screen.findByText("bridge unavailable")).toBeInTheDocument();
+  });
+
+  it("registers and locks a default creative pack composition", async () => {
+    const revision = { id: "rev-1" };
+    const api = createApi({
+      request: vi.fn().mockImplementation(async (method: string) => {
+        if (method === "project.current") {
+          return {
+            project: {
+              id: "p1",
+              name: "试播项目",
+              root_path: "/tmp/demo",
+              schema_version: 3,
+            },
+          };
+        }
+        if (method === "project.list_recent") return { projects: [] };
+        if (method === "job.list") return { jobs: [] };
+        if (method === "project.overview") return emptyOverview;
+        if (method === "pack.register") {
+          return {
+            pack: { id: "pack-1", name: "demo" },
+            revision,
+          };
+        }
+        if (method === "pack.compose") {
+          return {
+            composition_revision_id: "comp-rev-1",
+            status: "eligible",
+          };
+        }
+        if (method === "pack.evaluate") {
+          return { result: "pass", status_after: "eligible" };
+        }
+        if (method === "pack.lock") {
+          return { id: "lock-1234567890", purpose: "production" };
+        }
+        if (method === "pack.current_lock") {
+          return { lock: { id: "lock-1234567890" } };
+        }
+        if (method === "pack.list_compositions") {
+          return {
+            compositions: [
+              {
+                name: "夜市默认组合",
+                status: "eligible",
+                composition_revision_id: "comp-rev-1",
+              },
+            ],
+          };
+        }
+        return { status: "ok" };
+      }),
+    });
+    const user = userEvent.setup();
+    render(<App api={api} showDiagnostics />);
+    await user.click(await screen.findByRole("button", { name: "创作包" }));
+    await user.click(await screen.findByRole("button", { name: "注册并锁定默认组合" }));
+    expect(await screen.findByText(/已锁定 Creative Pack/)).toBeInTheDocument();
+    expect(screen.getByLabelText("创作包组合列表")).toHaveTextContent("夜市默认组合");
+    expect(api.request).toHaveBeenCalledWith(
+      "pack.lock",
+      { composition_revision_id: "comp-rev-1", purpose: "production" },
+      expect.any(String),
+    );
   });
 
   it("imports story text, splits chapters, and lists events", async () => {

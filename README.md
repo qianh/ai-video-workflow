@@ -15,9 +15,11 @@
 - 迁移前自动轻量快照（`project.db` → `snapshots/`）；支持 `snapshot.create` / `list`。
 - 桌面 UI 含主导航壳：项目总览 / 项目 / 故事 / 任务中心 / 链路诊断。
 - **M2 起步**：故事来源导入、章节切分、可定位事件与事件边（主线分支）。
+- **Creative Pack**：注册/发布修订、组合解析、固定套件评测、项目锁定（不自动覆盖旧锁定语义）。
 
 项目 RPC：`project.create` / `open` / `close` / `current` / `list_recent` / `overview`。  
 故事 RPC：`story.import_source` / `list_sources` / `split_chapters` / `list_chunks` / `create_event` / `list_events` / `create_edge` / `list_edges`。  
+创作包 RPC：`pack.register` / `publish_revision` / `list` / `compose` / `evaluate` / `lock` / `current_lock` / `list_compositions`。  
 任务 RPC：`job.enqueue` / `get` / `list` / `claim` / `complete` / `fail` / `cancel` / `pause` / `resume` / `reclaim_expired`。  
 环境 RPC：`env.summary`、`env.resolve`（必须传 `allow_keys`）。  
 快照 RPC：`snapshot.create`、`snapshot.list`。  
