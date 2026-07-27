@@ -22,6 +22,7 @@ from .persistence import (
 from .persistence.overview import build_project_overview
 from .persistence.paths import file_sha256, resolve_project_path, to_project_relative
 from .persistence.characters import CharacterService
+from .persistence.continuity import ContinuityService
 from .persistence.creative_packs import CreativePackService
 from .persistence.drafts import DraftService
 from .persistence.episode_scripts import EpisodeScriptService
@@ -232,6 +233,10 @@ class SidecarRuntime:
             await self._execute_locations(request)
             return
 
+        if request.method.startswith("continuity."):
+            await self._execute_continuity(request)
+            return
+
         if request.method.startswith("job."):
             await self._execute_job(request)
             return
@@ -319,6 +324,10 @@ class SidecarRuntime:
     def _locations(self) -> LocationService:
         self._workspace.require_project_db()
         return LocationService(self._workspace.require_project_db())
+
+    def _continuity(self) -> ContinuityService:
+        self._workspace.require_project_db()
+        return ContinuityService(self._workspace.require_project_db())
 
     def _resolve_branch_id(self, params: dict[str, Any]) -> str:
         branch_id = params.get("branch_id")
@@ -499,6 +508,173 @@ class SidecarRuntime:
                 raise ValueError("limit must be an integer")
             result = svc.list_package_revisions(limit=limit)
             self._emit(success_response(request.id, {"revisions": result}))
+            return
+
+        self._emit(
+            error_response(
+                request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
+            )
+        )
+
+    async def _execute_continuity(self, request: Request) -> None:
+        svc = self._continuity()
+        method = request.method
+        params = request.params
+
+        if method == "continuity.add":
+            subject_type = params.get("subject_type")
+            subject_id = params.get("subject_id")
+            state_key = params.get("state_key")
+            story_time_from = params.get("story_time_from")
+            time_from_ord = params.get("time_from_ord")
+            if not all(
+                isinstance(x, str)
+                for x in (subject_type, subject_id, state_key, story_time_from)
+            ):
+                raise ValueError(
+                    "subject_type, subject_id, state_key and story_time_from must be strings"
+                )
+            if isinstance(time_from_ord, bool) or not isinstance(time_from_ord, int):
+                raise ValueError("time_from_ord must be an integer")
+            if "value" not in params:
+                raise ValueError("value is required")
+            result = svc.add_state(
+                branch_id=self._resolve_branch_id(params),
+                subject_type=subject_type,
+                subject_id=subject_id,
+                state_key=state_key,
+                value=params.get("value"),
+                story_time_from=story_time_from,
+                time_from_ord=time_from_ord,
+                story_time_to=params.get("story_time_to"),
+                time_to_ord=params.get("time_to_ord"),
+                source_revision_id=params.get("source_revision_id"),
+                source_type=params.get("source_type", "user"),
+                priority=params.get("priority", 0),
+                allow_equal_priority_overlap=bool(
+                    params.get("allow_equal_priority_overlap", False)
+                ),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "continuity.end":
+            state_id = params.get("state_id")
+            story_time_to = params.get("story_time_to")
+            time_to_ord = params.get("time_to_ord")
+            if not isinstance(state_id, str) or not isinstance(story_time_to, str):
+                raise ValueError("state_id and story_time_to must be strings")
+            if isinstance(time_to_ord, bool) or not isinstance(time_to_ord, int):
+                raise ValueError("time_to_ord must be an integer")
+            self._emit(
+                success_response(
+                    request.id,
+                    svc.end_state(
+                        state_id,
+                        story_time_to=story_time_to,
+                        time_to_ord=time_to_ord,
+                    ),
+                )
+            )
+            return
+
+        if method == "continuity.supersede":
+            state_id = params.get("state_id")
+            if not isinstance(state_id, str):
+                raise ValueError("state_id must be a string")
+            self._emit(
+                success_response(
+                    request.id,
+                    svc.supersede_state(
+                        state_id, reason=params.get("reason")
+                    ),
+                )
+            )
+            return
+
+        if method == "continuity.get":
+            state_id = params.get("state_id")
+            if not isinstance(state_id, str):
+                raise ValueError("state_id must be a string")
+            self._emit(success_response(request.id, svc.get_state(state_id)))
+            return
+
+        if method == "continuity.list":
+            limit = params.get("limit", 200)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            result = svc.list_states(
+                branch_id=self._resolve_branch_id(params),
+                subject_type=params.get("subject_type"),
+                subject_id=params.get("subject_id"),
+                state_key=params.get("state_key"),
+                active_only=bool(params.get("active_only", True)),
+                limit=limit,
+            )
+            self._emit(success_response(request.id, {"states": result}))
+            return
+
+        if method == "continuity.effective":
+            subject_type = params.get("subject_type")
+            subject_id = params.get("subject_id")
+            state_key = params.get("state_key")
+            at_time_ord = params.get("at_time_ord")
+            if not all(
+                isinstance(x, str) for x in (subject_type, subject_id, state_key)
+            ):
+                raise ValueError(
+                    "subject_type, subject_id and state_key must be strings"
+                )
+            if isinstance(at_time_ord, bool) or not isinstance(at_time_ord, int):
+                raise ValueError("at_time_ord must be an integer")
+            result = svc.effective_at(
+                branch_id=self._resolve_branch_id(params),
+                subject_type=subject_type,
+                subject_id=subject_id,
+                state_key=state_key,
+                at_time_ord=at_time_ord,
+            )
+            self._emit(success_response(request.id, {"state": result}))
+            return
+
+        if method == "continuity.check":
+            persist = bool(params.get("persist", False))
+            result = svc.check_conflicts(
+                branch_id=self._resolve_branch_id(params),
+                persist=persist,
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "continuity.snapshot":
+            at_story_time = params.get("at_story_time")
+            at_time_ord = params.get("at_time_ord")
+            if not isinstance(at_story_time, str):
+                raise ValueError("at_story_time must be a string")
+            if isinstance(at_time_ord, bool) or not isinstance(at_time_ord, int):
+                raise ValueError("at_time_ord must be an integer")
+            result = svc.create_snapshot(
+                branch_id=self._resolve_branch_id(params),
+                at_story_time=at_story_time,
+                at_time_ord=at_time_ord,
+                purpose=params.get("purpose"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "continuity.list_snapshots":
+            limit = params.get("limit", 50)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            result = svc.list_snapshots(
+                branch_id=self._resolve_branch_id(params), limit=limit
+            )
+            self._emit(success_response(request.id, {"snapshots": result}))
+            return
+
+        if method == "continuity.overview":
+            result = svc.ledger_overview(self._resolve_branch_id(params))
+            self._emit(success_response(request.id, result))
             return
 
         self._emit(

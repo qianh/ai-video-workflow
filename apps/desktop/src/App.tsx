@@ -45,6 +45,7 @@ type ShellView =
   | "scripts"
   | "characters"
   | "world"
+  | "continuity"
   | "drafts"
   | "generation"
   | "jobs"
@@ -185,6 +186,13 @@ export function App({
     locationNames: string[];
     coreGateReady: boolean;
   } | null>(null);
+  const [continuitySummary, setContinuitySummary] = useState<{
+    stateCount: number;
+    blockerCount: number;
+    warningCount: number;
+    snapshotCount: number;
+    sampleKeys: string[];
+  } | null>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -257,6 +265,7 @@ export function App({
       setScriptSummary(null);
       setCharacterSummary(null);
       setWorldSummary(null);
+      setContinuitySummary(null);
     }
   }, [api]);
 
@@ -694,6 +703,111 @@ export function App({
       });
       await refreshPackState();
       setView("packs");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const buildContinuityLedger = async () => {
+    setBusy("continuity-setup");
+    try {
+      await api.request(
+        "continuity.add",
+        {
+          subject_type: "character",
+          subject_id: "char-aning",
+          state_key: "outfit",
+          value: { item: "raincoat" },
+          story_time_from: "E01",
+          time_from_ord: 100,
+          story_time_to: "E02",
+          time_to_ord: 200,
+          priority: 0,
+          source_type: "script",
+        },
+        requestId("cont-outfit"),
+      );
+      await api.request(
+        "continuity.add",
+        {
+          subject_type: "character",
+          subject_id: "char-aning",
+          state_key: "outfit",
+          value: { item: "hospital gown" },
+          story_time_from: "E01.injury",
+          time_from_ord: 120,
+          time_to_ord: 160,
+          priority: 10,
+          source_type: "user",
+        },
+        requestId("cont-outfit-hi"),
+      );
+      await api.request(
+        "continuity.add",
+        {
+          subject_type: "character",
+          subject_id: "char-aning",
+          state_key: "injury",
+          value: { part: "left arm", severity: "bruise" },
+          story_time_from: "E01",
+          time_from_ord: 100,
+          priority: 0,
+        },
+        requestId("cont-injury"),
+      );
+      await api.request(
+        "continuity.add",
+        {
+          subject_type: "prop",
+          subject_id: "prop-usb",
+          state_key: "owner",
+          value: { character_id: "char-aning" },
+          story_time_from: "E01",
+          time_from_ord: 100,
+          priority: 0,
+        },
+        requestId("cont-owner"),
+      );
+      const check = await api.request(
+        "continuity.check",
+        {},
+        requestId("cont-check"),
+      );
+      await api.request(
+        "continuity.snapshot",
+        {
+          at_story_time: "E01.mid",
+          at_time_ord: 130,
+          purpose: "ui sample",
+        },
+        requestId("cont-snap"),
+      );
+      const overview = await api.request(
+        "continuity.overview",
+        {},
+        requestId("cont-overview"),
+      );
+      const states =
+        (overview.states as Array<{ state_key?: string }> | undefined) ?? [];
+      const conflicts = (overview.conflicts as {
+        blocker_count?: number;
+        warning_count?: number;
+      } | undefined) ?? {};
+      const snapshots = (overview.snapshots as unknown[] | undefined) ?? [];
+      setContinuitySummary({
+        stateCount: Number(overview.active_state_count ?? states.length),
+        blockerCount: Number(conflicts.blocker_count ?? check.blocker_count ?? 0),
+        warningCount: Number(conflicts.warning_count ?? check.warning_count ?? 0),
+        snapshotCount: snapshots.length,
+        sampleKeys: [...new Set(states.map((s) => String(s.state_key ?? "")))],
+      });
+      setNotice({
+        tone: "success",
+        text: `状态账本就绪 · states=${String(overview.active_state_count)} · blockers=${String(conflicts.blocker_count ?? 0)} · snaps=${snapshots.length}`,
+      });
+      setView("continuity");
     } catch (error) {
       setNotice({ tone: "warning", text: errorMessage(error) });
     } finally {
@@ -1432,6 +1546,7 @@ export function App({
     { id: "scripts", label: "分集剧本" },
     { id: "characters", label: "角色声音" },
     { id: "world", label: "场景道具" },
+    { id: "continuity", label: "状态账本" },
     { id: "drafts", label: "草稿修订" },
     { id: "generation", label: "生成流水线" },
     { id: "jobs", label: "任务中心" },
@@ -1844,6 +1959,67 @@ export function App({
                   ))}
                 </ul>
               )}
+            </>
+          )}
+        </section>
+      )}
+
+      {view === "continuity" && (
+        <section className="console-panel" aria-label="状态账本">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">CONTINUITY LEDGER</p>
+              <h3>时间化状态与冲突检查</h3>
+            </div>
+            <span className="panel-number">M2.12</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="写入样例状态账本"
+                  className="action primary"
+                  onClick={() => void buildContinuityLedger()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">T1</span>
+                  <span>
+                    <strong>写入样例状态账本</strong>
+                    <small>outfit / injury / owner → snapshot</small>
+                  </span>
+                </button>
+              </div>
+              {!continuitySummary ? (
+                <p className="empty-hint">尚未写入连续性状态。</p>
+              ) : (
+                <div className="overview-columns">
+                  <div>
+                    <h4>状态键</h4>
+                    <ul className="job-list" aria-label="状态键列表">
+                      {continuitySummary.sampleKeys.map((key) => (
+                        <li key={key}>
+                          <code>key</code> {key}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <h4>统计</h4>
+                    <ul className="job-list" aria-label="账本统计">
+                      <li>活动状态 {continuitySummary.stateCount}</li>
+                      <li>阻断冲突 {continuitySummary.blockerCount}</li>
+                      <li>警告 {continuitySummary.warningCount}</li>
+                      <li>快照 {continuitySummary.snapshotCount}</li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+              <p className="empty-hint">
+                同优先级区间重叠为 blocker；快照前必须无 blocker。有效状态按最高
+                priority 解析。
+              </p>
             </>
           )}
         </section>

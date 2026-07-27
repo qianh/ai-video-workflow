@@ -22,7 +22,7 @@ def test_script_scene_dialogue_hook_approve_flow(tmp_path: Path) -> None:
     parent = tmp_path / "projects"
     parent.mkdir()
     project = service.create_project(parent, "Scripts")
-    assert project.schema_version >= 11
+    assert project.schema_version >= 12
 
     db = service.require_project_db()
     story = StoryService(db, Path(project.root_path))

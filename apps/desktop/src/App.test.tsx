@@ -506,6 +506,69 @@ describe("M1 shell", () => {
     );
   });
 
+  it("writes continuity ledger and creates an immutable snapshot", async () => {
+    const api = createApi({
+      request: vi.fn().mockImplementation(async (method: string) => {
+        if (method === "project.current") {
+          return {
+            project: {
+              id: "p1",
+              name: "试播项目",
+              root_path: "/tmp/demo",
+              schema_version: 12,
+            },
+          };
+        }
+        if (method === "project.list_recent") return { projects: [] };
+        if (method === "job.list") return { jobs: [] };
+        if (method === "project.overview") return emptyOverview;
+        if (method === "continuity.add") {
+          return {
+            id: "s1",
+            state_key: "outfit",
+            status: "active",
+            value: { item: "raincoat" },
+          };
+        }
+        if (method === "continuity.check") {
+          return { blocked: false, blocker_count: 0, warning_count: 1 };
+        }
+        if (method === "continuity.snapshot") {
+          return {
+            id: "snap-1",
+            immutable: true,
+            states: [{ state_key: "outfit", value: { item: "hospital gown" } }],
+          };
+        }
+        if (method === "continuity.overview") {
+          return {
+            active_state_count: 4,
+            states: [
+              { state_key: "outfit" },
+              { state_key: "injury" },
+              { state_key: "owner" },
+            ],
+            conflicts: { blocker_count: 0, warning_count: 1 },
+            snapshots: [{ id: "snap-1" }],
+          };
+        }
+        return { status: "ok" };
+      }),
+    });
+    const user = userEvent.setup();
+    render(<App api={api} showDiagnostics />);
+    await user.click(await screen.findByRole("button", { name: "状态账本" }));
+    await user.click(await screen.findByRole("button", { name: "写入样例状态账本" }));
+    expect(await screen.findByText(/状态账本就绪/)).toBeInTheDocument();
+    expect(screen.getByLabelText("状态键列表")).toHaveTextContent("outfit");
+    expect(screen.getByLabelText("账本统计")).toHaveTextContent("活动状态 4");
+    expect(api.request).toHaveBeenCalledWith(
+      "continuity.snapshot",
+      expect.objectContaining({ at_time_ord: 130 }),
+      expect.any(String),
+    );
+  });
+
   it("creates locations props spatial links and confirms core pack", async () => {
     let locCount = 0;
     const api = createApi({

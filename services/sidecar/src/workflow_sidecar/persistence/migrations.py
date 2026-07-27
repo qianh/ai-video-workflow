@@ -816,6 +816,70 @@ PROJECT_MIGRATIONS: list[Migration] = [
             ON location_prop_anchors(location_pack_revision_id);
         """,
     ),
+    (
+        12,
+        """
+        CREATE TABLE continuity_states (
+            id TEXT PRIMARY KEY,
+            branch_id TEXT NOT NULL,
+            subject_type TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            state_key TEXT NOT NULL,
+            value_json TEXT NOT NULL,
+            story_time_from TEXT NOT NULL,
+            story_time_to TEXT,
+            time_from_ord INTEGER NOT NULL,
+            time_to_ord INTEGER,
+            source_revision_id TEXT,
+            source_type TEXT,
+            priority INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX idx_continuity_lookup
+            ON continuity_states(
+                branch_id, subject_type, subject_id, state_key, status
+            );
+        CREATE INDEX idx_continuity_time
+            ON continuity_states(branch_id, time_from_ord, time_to_ord);
+
+        CREATE TABLE continuity_conflict_reports (
+            id TEXT PRIMARY KEY,
+            branch_id TEXT NOT NULL,
+            subject_type TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            state_key TEXT NOT NULL,
+            state_a_id TEXT NOT NULL,
+            state_b_id TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            message TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            resolved_at TEXT,
+            FOREIGN KEY(state_a_id) REFERENCES continuity_states(id),
+            FOREIGN KEY(state_b_id) REFERENCES continuity_states(id)
+        );
+
+        CREATE INDEX idx_continuity_conflicts
+            ON continuity_conflict_reports(branch_id, status);
+
+        CREATE TABLE continuity_snapshots (
+            id TEXT PRIMARY KEY,
+            branch_id TEXT NOT NULL,
+            at_story_time TEXT NOT NULL,
+            at_time_ord INTEGER NOT NULL,
+            purpose TEXT,
+            states_json TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX idx_continuity_snapshots
+            ON continuity_snapshots(branch_id, at_time_ord);
+        """,
+    ),
 ]
 
 
