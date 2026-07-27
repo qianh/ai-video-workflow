@@ -506,6 +506,136 @@ describe("M1 shell", () => {
     );
   });
 
+  it("builds and approves a story package with season timeline", async () => {
+    let seeded = false;
+    const emptySeason = {
+      branch_id: "b1",
+      world_rules: [] as object[],
+      timeline: [] as object[],
+      episodes: [] as object[],
+      packages: [] as object[],
+    };
+    const filledSeason = {
+      branch_id: "b1",
+      world_rules: [
+        {
+          id: "rule-hard",
+          category: "continuity",
+          rule_text: "forbid:时间旅行",
+          force_level: "hard",
+        },
+        {
+          id: "rule-soft",
+          category: "tone",
+          rule_text: "保持冷色夜市氛围",
+          force_level: "soft",
+        },
+      ],
+      timeline: [
+        {
+          id: "beat-1",
+          beat_no: 1,
+          title: "发现",
+          summary: "雨夜捡到发光 U 盘",
+        },
+        {
+          id: "beat-2",
+          beat_no: 2,
+          title: "追索",
+          summary: "追查失踪消息来源",
+        },
+      ],
+      episodes: [
+        { id: "ep-1", episode_no: 1, title: "第1集", status: "planned" },
+        { id: "ep-2", episode_no: 2, title: "第2集", status: "planned" },
+        { id: "ep-3", episode_no: 3, title: "第3集", status: "planned" },
+      ],
+      packages: [
+        {
+          id: "pkg-rev-1",
+          status: "approved",
+          contains_media_prompts: false,
+        },
+      ],
+    };
+    const api = createApi({
+      request: vi.fn().mockImplementation(async (method: string) => {
+        if (method === "project.current") {
+          return {
+            project: {
+              id: "p1",
+              name: "试播项目",
+              root_path: "/tmp/demo",
+              schema_version: 7,
+            },
+          };
+        }
+        if (method === "project.list_recent") return { projects: [] };
+        if (method === "job.list") return { jobs: [] };
+        if (method === "project.overview") return emptyOverview;
+        if (method === "season.overview") {
+          return seeded ? filledSeason : emptySeason;
+        }
+        if (method === "world.add_rule") {
+          return {
+            id: method.includes("soft") ? "rule-soft" : "rule-hard",
+            category: "continuity",
+            rule_text: "forbid:时间旅行",
+            force_level: "hard",
+          };
+        }
+        if (method === "season.add_beat") {
+          return {
+            id: "beat-1",
+            beat_no: 1,
+            title: "发现",
+            summary: "雨夜捡到发光 U 盘",
+          };
+        }
+        if (method === "season.ensure_episodes") {
+          return {
+            episodes: filledSeason.episodes,
+          };
+        }
+        if (method === "package.create") {
+          return {
+            id: "pkg-rev-1",
+            status: "validated",
+            contains_media_prompts: false,
+          };
+        }
+        if (method === "package.approve") {
+          seeded = true;
+          return {
+            id: "pkg-rev-1",
+            status: "approved",
+            contains_media_prompts: false,
+          };
+        }
+        return { status: "ok" };
+      }),
+    });
+    const user = userEvent.setup();
+    render(<App api={api} showDiagnostics />);
+    await user.click(await screen.findByRole("button", { name: "故事包" }));
+    await user.click(await screen.findByRole("button", { name: "构建并批准故事包" }));
+    expect(await screen.findByText(/故事包已批准/)).toBeInTheDocument();
+    expect(screen.getByLabelText("世界规则列表")).toHaveTextContent("forbid:时间旅行");
+    expect(screen.getByLabelText("季时间线列表")).toHaveTextContent("发现");
+    expect(screen.getByLabelText("分集列表")).toHaveTextContent("第1集");
+    expect(screen.getByLabelText("故事包修订列表")).toHaveTextContent("approved");
+    expect(api.request).toHaveBeenCalledWith(
+      "world.add_rule",
+      expect.objectContaining({ force_level: "hard" }),
+      expect.any(String),
+    );
+    expect(api.request).toHaveBeenCalledWith(
+      "package.approve",
+      { revision_id: "pkg-rev-1" },
+      expect.any(String),
+    );
+  });
+
   it("imports story text, splits chapters, and lists events", async () => {
     const api = createApi({
       request: vi.fn().mockImplementation(async (method: string) => {

@@ -349,6 +349,77 @@ PROJECT_MIGRATIONS: list[Migration] = [
         CREATE INDEX idx_generation_reviews_run ON generation_reviews(run_id, iteration);
         """,
     ),
+    (
+        7,
+        """
+        CREATE TABLE world_rules (
+            id TEXT PRIMARY KEY,
+            branch_id TEXT NOT NULL,
+            category TEXT NOT NULL,
+            rule_text TEXT NOT NULL,
+            force_level TEXT NOT NULL,
+            scope_json TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX idx_world_rules_branch ON world_rules(branch_id, category);
+
+        CREATE TABLE season_timeline_beats (
+            id TEXT PRIMARY KEY,
+            branch_id TEXT NOT NULL,
+            beat_no INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            story_time TEXT,
+            arc_tag TEXT,
+            episode_nos_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(branch_id, beat_no)
+        );
+
+        CREATE TABLE episodes (
+            id TEXT PRIMARY KEY,
+            branch_id TEXT NOT NULL,
+            episode_no INTEGER NOT NULL,
+            title TEXT,
+            status TEXT NOT NULL,
+            current_script_revision_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(branch_id, episode_no)
+        );
+
+        CREATE TABLE story_packages (
+            id TEXT PRIMARY KEY,
+            branch_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE story_package_revisions (
+            id TEXT PRIMARY KEY,
+            package_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            branch_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            positioning_json TEXT NOT NULL,
+            world_rule_ids_json TEXT NOT NULL,
+            timeline_beat_ids_json TEXT NOT NULL,
+            episode_ids_json TEXT NOT NULL,
+            pack_lock_id TEXT,
+            content_hash TEXT NOT NULL,
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(package_id) REFERENCES story_packages(id),
+            UNIQUE(package_id, revision_no)
+        );
+
+        CREATE INDEX idx_story_package_revisions ON story_package_revisions(package_id, revision_no);
+        """,
+    ),
 ]
 
 

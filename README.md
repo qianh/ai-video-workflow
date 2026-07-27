@@ -18,12 +18,16 @@
 - **Creative Pack**：注册/发布修订、组合解析、固定套件评测、项目锁定（不自动覆盖旧锁定语义）。
 - **草稿门禁**：`draft → validate → promote`，无绕过 Schema 的正式修订入口。
 - **生成流水线**：`plan → execute → review`；执行只产草稿，审阅隔离，不自动正式修订。
+- **故事包 / 世界规则 / 季时间线**：hard 规则可阻断正式包；故事包不内嵌媒体提示词；分集容器与 timeline beats 可审批出口。
 
 项目 RPC：`project.create` / `open` / `close` / `current` / `list_recent` / `overview`。  
 故事 RPC：`story.import_source` / `list_sources` / `split_chapters` / `list_chunks` / `create_event` / `list_events` / `create_edge` / `list_edges` / `list_branches` / `create_branch` / `fork_branch` / `set_primary` / `archive_branch`。  
 创作包 RPC：`pack.register` / `publish_revision` / `list` / `compose` / `evaluate` / `lock` / `current_lock` / `list_compositions`。  
 草稿 RPC：`draft.create` / `update` / `validate` / `promote` / `get` / `list` / `list_schemas`；`revision.list`。  
 生成 RPC：`generation.create` / `plan` / `execute` / `review` / `accept_human` / `open_draft_gate` / `get` / `history` / `list`。  
+世界规则 RPC：`world.add_rule` / `list_rules` / `check_conflicts`。  
+季/分集 RPC：`season.add_beat` / `list_beats` / `ensure_episodes` / `list_episodes` / `overview`。  
+故事包 RPC：`package.create` / `approve` / `get` / `list`。  
 任务 RPC：`job.enqueue` / `get` / `list` / `claim` / `complete` / `fail` / `cancel` / `pause` / `resume` / `reclaim_expired`。  
 环境 RPC：`env.summary`、`env.resolve`（必须传 `allow_keys`）。  
 快照 RPC：`snapshot.create`、`snapshot.list`。  

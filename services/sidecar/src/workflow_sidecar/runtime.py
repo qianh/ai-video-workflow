@@ -25,6 +25,7 @@ from .persistence.creative_packs import CreativePackService
 from .persistence.drafts import DraftService
 from .persistence.generation import GenerationService
 from .persistence.story import StoryService
+from .persistence.story_package import StoryPackageService
 from .protocol import Request, error_response, event, success_response
 
 
@@ -193,6 +194,14 @@ class SidecarRuntime:
             await self._execute_generation(request)
             return
 
+        if (
+            request.method.startswith("world.")
+            or request.method.startswith("season.")
+            or request.method.startswith("package.")
+        ):
+            await self._execute_story_package(request)
+            return
+
         if request.method.startswith("job."):
             await self._execute_job(request)
             return
@@ -255,6 +264,197 @@ class SidecarRuntime:
     def _generation(self) -> GenerationService:
         self._workspace.require_project_db()
         return GenerationService(self._workspace.require_project_db())
+
+    def _story_packages(self) -> StoryPackageService:
+        self._workspace.require_project_db()
+        return StoryPackageService(self._workspace.require_project_db())
+
+    def _resolve_branch_id(self, params: dict[str, Any]) -> str:
+        branch_id = params.get("branch_id")
+        if branch_id is None:
+            return self._story().primary_branch_id()
+        if not isinstance(branch_id, str) or not branch_id:
+            raise ValueError("branch_id must be a non-empty string")
+        return branch_id
+
+    async def _execute_story_package(self, request: Request) -> None:
+        svc = self._story_packages()
+        method = request.method
+        params = request.params
+
+        if method == "world.add_rule":
+            category = params.get("category")
+            rule_text = params.get("rule_text")
+            force_level = params.get("force_level", "soft")
+            scope = params.get("scope")
+            if not isinstance(category, str) or not isinstance(rule_text, str):
+                raise ValueError("category and rule_text must be strings")
+            if not isinstance(force_level, str):
+                raise ValueError("force_level must be a string")
+            if scope is not None and not isinstance(scope, dict):
+                raise ValueError("scope must be an object")
+            result = svc.add_world_rule(
+                branch_id=self._resolve_branch_id(params),
+                category=category,
+                rule_text=rule_text,
+                force_level=force_level,
+                scope=scope,
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "world.list_rules":
+            result = svc.list_world_rules(self._resolve_branch_id(params))
+            self._emit(success_response(request.id, {"rules": result}))
+            return
+
+        if method == "world.check_conflicts":
+            claims = params.get("claims")
+            if not isinstance(claims, list):
+                raise ValueError("claims must be an array")
+            conflicts = svc.check_hard_rule_conflicts(
+                self._resolve_branch_id(params), claims
+            )
+            self._emit(
+                success_response(
+                    request.id,
+                    {"conflicts": conflicts, "blocked": len(conflicts) > 0},
+                )
+            )
+            return
+
+        if method == "season.add_beat":
+            beat_no = params.get("beat_no")
+            title = params.get("title")
+            summary = params.get("summary")
+            story_time = params.get("story_time")
+            arc_tag = params.get("arc_tag")
+            episode_nos = params.get("episode_nos")
+            if isinstance(beat_no, bool) or not isinstance(beat_no, int):
+                raise ValueError("beat_no must be an integer")
+            if not isinstance(title, str) or not isinstance(summary, str):
+                raise ValueError("title and summary must be strings")
+            if story_time is not None and not isinstance(story_time, str):
+                raise ValueError("story_time must be a string")
+            if arc_tag is not None and not isinstance(arc_tag, str):
+                raise ValueError("arc_tag must be a string")
+            if episode_nos is not None and not isinstance(episode_nos, list):
+                raise ValueError("episode_nos must be an array")
+            result = svc.add_timeline_beat(
+                branch_id=self._resolve_branch_id(params),
+                beat_no=beat_no,
+                title=title,
+                summary=summary,
+                story_time=story_time,
+                arc_tag=arc_tag,
+                episode_nos=episode_nos,
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "season.list_beats":
+            result = svc.list_timeline(self._resolve_branch_id(params))
+            self._emit(success_response(request.id, {"beats": result}))
+            return
+
+        if method == "season.ensure_episodes":
+            count = params.get("count")
+            title_prefix = params.get("title_prefix", "第")
+            if isinstance(count, bool) or not isinstance(count, int):
+                raise ValueError("count must be an integer")
+            if not isinstance(title_prefix, str):
+                raise ValueError("title_prefix must be a string")
+            result = svc.ensure_episodes(
+                branch_id=self._resolve_branch_id(params),
+                count=count,
+                title_prefix=title_prefix,
+            )
+            self._emit(success_response(request.id, {"episodes": result}))
+            return
+
+        if method == "season.list_episodes":
+            result = svc.list_episodes(self._resolve_branch_id(params))
+            self._emit(success_response(request.id, {"episodes": result}))
+            return
+
+        if method == "season.overview":
+            result = svc.season_overview(self._resolve_branch_id(params))
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "package.create":
+            name = params.get("name")
+            positioning = params.get("positioning")
+            world_rule_ids = params.get("world_rule_ids")
+            timeline_beat_ids = params.get("timeline_beat_ids")
+            episode_ids = params.get("episode_ids")
+            pack_lock_id = params.get("pack_lock_id")
+            notes = params.get("notes")
+            claims_for_rules = params.get("claims_for_rules")
+            if not isinstance(name, str):
+                raise ValueError("name must be a string")
+            if not isinstance(positioning, dict):
+                raise ValueError("positioning must be an object")
+            if world_rule_ids is not None and not isinstance(world_rule_ids, list):
+                raise ValueError("world_rule_ids must be an array")
+            if timeline_beat_ids is not None and not isinstance(
+                timeline_beat_ids, list
+            ):
+                raise ValueError("timeline_beat_ids must be an array")
+            if episode_ids is not None and not isinstance(episode_ids, list):
+                raise ValueError("episode_ids must be an array")
+            if pack_lock_id is not None and not isinstance(pack_lock_id, str):
+                raise ValueError("pack_lock_id must be a string")
+            if notes is not None and not isinstance(notes, str):
+                raise ValueError("notes must be a string")
+            if claims_for_rules is not None and not isinstance(
+                claims_for_rules, list
+            ):
+                raise ValueError("claims_for_rules must be an array")
+            result = svc.create_package_revision(
+                branch_id=self._resolve_branch_id(params),
+                name=name,
+                positioning=positioning,
+                world_rule_ids=world_rule_ids,
+                timeline_beat_ids=timeline_beat_ids,
+                episode_ids=episode_ids,
+                pack_lock_id=pack_lock_id,
+                notes=notes,
+                claims_for_rules=claims_for_rules,
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "package.approve":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            result = svc.approve_package_revision(revision_id)
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "package.get":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            self._emit(
+                success_response(request.id, svc.get_package_revision(revision_id))
+            )
+            return
+
+        if method == "package.list":
+            limit = params.get("limit", 50)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            result = svc.list_package_revisions(limit=limit)
+            self._emit(success_response(request.id, {"revisions": result}))
+            return
+
+        self._emit(
+            error_response(
+                request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
+            )
+        )
 
     async def _execute_generation(self, request: Request) -> None:
         gen = self._generation()

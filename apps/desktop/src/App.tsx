@@ -41,6 +41,7 @@ type ShellView =
   | "project"
   | "story"
   | "packs"
+  | "package"
   | "drafts"
   | "generation"
   | "jobs"
@@ -139,6 +140,23 @@ export function App({
   const [genRuns, setGenRuns] = useState<
     { id: string; title: string; status: string; iteration: number }[]
   >([]);
+  const [worldRules, setWorldRules] = useState<
+    { id: string; category: string; rule_text: string; force_level: string }[]
+  >([]);
+  const [timelineBeats, setTimelineBeats] = useState<
+    { id: string; beat_no: number; title: string; summary: string }[]
+  >([]);
+  const [episodes, setEpisodes] = useState<
+    { id: string; episode_no: number; title: string; status: string }[]
+  >([]);
+  const [packageRevisions, setPackageRevisions] = useState<
+    {
+      id: string;
+      name?: string;
+      status: string;
+      contains_media_prompts: boolean;
+    }[]
+  >([]);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -204,8 +222,66 @@ export function App({
       setDrafts([]);
       setRevisions([]);
       setGenRuns([]);
+      setWorldRules([]);
+      setTimelineBeats([]);
+      setEpisodes([]);
+      setPackageRevisions([]);
     }
   }, [api]);
+
+  const refreshSeasonPackageState = useCallback(async () => {
+    if (!project) {
+      setWorldRules([]);
+      setTimelineBeats([]);
+      setEpisodes([]);
+      setPackageRevisions([]);
+      return;
+    }
+    const overview = await api.request(
+      "season.overview",
+      {},
+      requestId("season-overview"),
+    );
+    setWorldRules(
+      ((overview.world_rules as Array<Record<string, unknown>> | undefined) ?? []).map(
+        (item) => ({
+          id: String(item.id ?? ""),
+          category: String(item.category ?? ""),
+          rule_text: String(item.rule_text ?? ""),
+          force_level: String(item.force_level ?? ""),
+        }),
+      ),
+    );
+    setTimelineBeats(
+      ((overview.timeline as Array<Record<string, unknown>> | undefined) ?? []).map(
+        (item) => ({
+          id: String(item.id ?? ""),
+          beat_no: Number(item.beat_no ?? 0),
+          title: String(item.title ?? ""),
+          summary: String(item.summary ?? ""),
+        }),
+      ),
+    );
+    setEpisodes(
+      ((overview.episodes as Array<Record<string, unknown>> | undefined) ?? []).map(
+        (item) => ({
+          id: String(item.id ?? ""),
+          episode_no: Number(item.episode_no ?? 0),
+          title: String(item.title ?? ""),
+          status: String(item.status ?? ""),
+        }),
+      ),
+    );
+    setPackageRevisions(
+      ((overview.packages as Array<Record<string, unknown>> | undefined) ?? []).map(
+        (item) => ({
+          id: String(item.id ?? ""),
+          status: String(item.status ?? ""),
+          contains_media_prompts: Boolean(item.contains_media_prompts),
+        }),
+      ),
+    );
+  }, [api, project]);
 
   const refreshGenerationState = useCallback(async () => {
     if (!project) {
@@ -594,6 +670,107 @@ export function App({
     }
   };
 
+  const buildSeasonPackage = async () => {
+    setBusy("package-setup");
+    try {
+      const existing = await api.request(
+        "season.overview",
+        {},
+        requestId("season-overview-pre"),
+      );
+      let ruleIds = (
+        (existing.world_rules as Array<{ id?: string }> | undefined) ?? []
+      ).map((item) => String(item.id));
+      if (ruleIds.length === 0) {
+        const hard = await api.request(
+          "world.add_rule",
+          {
+            category: "continuity",
+            rule_text: "forbid:时间旅行",
+            force_level: "hard",
+          },
+          requestId("world-hard"),
+        );
+        const soft = await api.request(
+          "world.add_rule",
+          {
+            category: "tone",
+            rule_text: "保持冷色夜市氛围",
+            force_level: "soft",
+          },
+          requestId("world-soft"),
+        );
+        ruleIds = [String(hard.id), String(soft.id)];
+      }
+
+      let beatIds = (
+        (existing.timeline as Array<{ id?: string }> | undefined) ?? []
+      ).map((item) => String(item.id));
+      if (beatIds.length === 0) {
+        const beat1 = await api.request(
+          "season.add_beat",
+          {
+            beat_no: 1,
+            title: "发现",
+            summary: "雨夜捡到发光 U 盘",
+            arc_tag: "setup",
+            episode_nos: [1],
+          },
+          requestId("season-beat-1"),
+        );
+        const beat2 = await api.request(
+          "season.add_beat",
+          {
+            beat_no: 2,
+            title: "追索",
+            summary: "追查失踪消息来源",
+            arc_tag: "rising",
+            episode_nos: [2, 3],
+          },
+          requestId("season-beat-2"),
+        );
+        beatIds = [String(beat1.id), String(beat2.id)];
+      }
+
+      const ensured = await api.request(
+        "season.ensure_episodes",
+        { count: 3 },
+        requestId("season-episodes"),
+      );
+      const episodeIds = (
+        (ensured.episodes as Array<{ id?: string }> | undefined) ?? []
+      ).map((item) => String(item.id));
+      const created = await api.request(
+        "package.create",
+        {
+          name: "试播季故事包",
+          positioning: { theme: "都市悬疑", audience: "短剧" },
+          world_rule_ids: ruleIds,
+          timeline_beat_ids: beatIds,
+          episode_ids: episodeIds,
+          notes: "UI sample package",
+          claims_for_rules: ["雨夜追逐"],
+        },
+        requestId("package-create"),
+      );
+      const approved = await api.request(
+        "package.approve",
+        { revision_id: String(created.id) },
+        requestId("package-approve"),
+      );
+      setNotice({
+        tone: "success",
+        text: `故事包已批准 · status=${String(approved.status)} · media_prompts=${String(approved.contains_media_prompts)} · 分集 ${episodeIds.length}`,
+      });
+      await refreshSeasonPackageState();
+      setView("package");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const runGenerationPipeline = async () => {
     setBusy("generation");
     try {
@@ -816,6 +993,7 @@ export function App({
     { id: "project", label: "项目" },
     { id: "story", label: "故事" },
     { id: "packs", label: "创作包" },
+    { id: "package", label: "故事包" },
     { id: "drafts", label: "草稿修订" },
     { id: "generation", label: "生成流水线" },
     { id: "jobs", label: "任务中心" },
@@ -1228,6 +1406,112 @@ export function App({
                   ))}
                 </ul>
               )}
+            </>
+          )}
+        </section>
+      )}
+
+      {view === "package" && (
+        <section className="console-panel" aria-label="故事包">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">STORY PACKAGE · SEASON</p>
+              <h3>故事包与季时间线</h3>
+            </div>
+            <span className="panel-number">M2.07</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="构建并批准故事包"
+                  className="action primary"
+                  onClick={() => void buildSeasonPackage()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">K1</span>
+                  <span>
+                    <strong>构建并批准故事包</strong>
+                    <small>rules + timeline + episodes → approve</small>
+                  </span>
+                </button>
+                <button
+                  aria-label="刷新故事包"
+                  className="action"
+                  onClick={() => void refreshSeasonPackageState()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">K2</span>
+                  <span>
+                    <strong>刷新概览</strong>
+                    <small>season.overview</small>
+                  </span>
+                </button>
+              </div>
+              <div className="overview-columns">
+                <div>
+                  <h4>世界规则</h4>
+                  {worldRules.length === 0 ? (
+                    <p className="empty-hint">暂无规则</p>
+                  ) : (
+                    <ul className="job-list" aria-label="世界规则列表">
+                      {worldRules.map((rule) => (
+                        <li key={rule.id}>
+                          <code>{rule.force_level}</code> {rule.category} · {rule.rule_text}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div>
+                  <h4>时间线</h4>
+                  {timelineBeats.length === 0 ? (
+                    <p className="empty-hint">暂无 beats</p>
+                  ) : (
+                    <ul className="job-list" aria-label="季时间线列表">
+                      {timelineBeats.map((beat) => (
+                        <li key={beat.id}>
+                          <code>#{beat.beat_no}</code> {beat.title} · {beat.summary}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div>
+                  <h4>分集</h4>
+                  {episodes.length === 0 ? (
+                    <p className="empty-hint">暂无分集</p>
+                  ) : (
+                    <ul className="job-list" aria-label="分集列表">
+                      {episodes.map((ep) => (
+                        <li key={ep.id}>
+                          <code>{ep.status}</code> E{ep.episode_no} {ep.title}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+              <div>
+                <h4>故事包修订</h4>
+                {packageRevisions.length === 0 ? (
+                  <p className="empty-hint">暂无故事包</p>
+                ) : (
+                  <ul className="job-list" aria-label="故事包修订列表">
+                    {packageRevisions.map((rev) => (
+                      <li key={rev.id}>
+                        <code>{rev.status}</code> media_prompts=
+                        {String(rev.contains_media_prompts)} · {rev.id.slice(0, 8)}…
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="empty-hint">
+                  故事包仅含叙事结构引用，永不内嵌媒体提示词或镜头参数。
+                </p>
+              </div>
             </>
           )}
         </section>
