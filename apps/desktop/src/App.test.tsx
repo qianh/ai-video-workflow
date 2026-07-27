@@ -365,6 +365,82 @@ describe("M1 shell", () => {
     expect(await screen.findByText("bridge unavailable")).toBeInTheDocument();
   });
 
+  it("forks a story branch and can promote it to primary", async () => {
+    let primaryId = "b-primary";
+    const api = createApi({
+      request: vi.fn().mockImplementation(async (method: string) => {
+        if (method === "project.current") {
+          return {
+            project: {
+              id: "p1",
+              name: "试播项目",
+              root_path: "/tmp/demo",
+              schema_version: 4,
+            },
+          };
+        }
+        if (method === "project.list_recent") return { projects: [] };
+        if (method === "job.list") return { jobs: [] };
+        if (method === "project.overview") return emptyOverview;
+        if (method === "story.list_branches") {
+          return {
+            branches: [
+              {
+                id: primaryId,
+                name: primaryId === "b-primary" ? "主线" : "探索线 1",
+                status: "primary",
+                is_primary: true,
+              },
+              ...(primaryId === "b-fork"
+                ? [
+                    {
+                      id: "b-primary",
+                      name: "主线",
+                      status: "candidate",
+                      is_primary: false,
+                    },
+                  ]
+                : [
+                    {
+                      id: "b-fork",
+                      name: "探索线 1",
+                      status: "exploring",
+                      is_primary: false,
+                    },
+                  ]),
+            ],
+          };
+        }
+        if (method === "story.fork_branch") {
+          return {
+            id: "b-fork",
+            name: "探索线 1",
+            status: "exploring",
+            is_primary: false,
+            copied_events: 2,
+          };
+        }
+        if (method === "story.set_primary") {
+          primaryId = "b-fork";
+          return {
+            id: "b-fork",
+            name: "探索线 1",
+            status: "primary",
+            is_primary: true,
+          };
+        }
+        return { status: "ok" };
+      }),
+    });
+    const user = userEvent.setup();
+    render(<App api={api} showDiagnostics />);
+    await user.click(await screen.findByRole("button", { name: "故事" }));
+    await user.click(await screen.findByRole("button", { name: "分叉探索线" }));
+    expect(await screen.findByText(/已分叉分支/)).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "设为主线 探索线 1" }));
+    expect(await screen.findByText(/设为生产主线/)).toBeInTheDocument();
+  });
+
   it("registers and locks a default creative pack composition", async () => {
     const revision = { id: "rev-1" };
     const api = createApi({
