@@ -54,6 +54,8 @@ type ShellView =
   | "review"
   | "shots"
   | "exports"
+  | "music"
+  | "rework"
   | "components"
   | "acceptance"
   | "drafts"
@@ -300,9 +302,35 @@ export function App({
       byteSize: number;
     }[]
   >([]);
-
-
-
+  const [opsSummary, setOpsSummary] = useState<{
+    openReviews: number;
+    exportCount: number;
+    readyBatch: boolean;
+    readyExport: boolean;
+    cosyStatus: string;
+    grokCalls: number;
+  } | null>(null);
+  const [gateBoard, setGateBoard] = useState<
+    {
+      type: string;
+      status: string;
+      valid: boolean;
+      ready: boolean;
+      gateId?: string;
+    }[]
+  >([]);
+  const [musicItems, setMusicItems] = useState<
+    { id: string; title: string; status: string; kind: string }[]
+  >([]);
+  const [staleItems, setStaleItems] = useState<
+    {
+      id: string;
+      status: string;
+      shot: string;
+      shotRevisionId: string;
+      locked: boolean;
+    }[]
+  >([]);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -2356,6 +2384,300 @@ export function App({
     }
   };
 
+
+  const loadOpsSummary = async () => {
+    setBusy("ops-summary");
+    try {
+      const status = await api.request("gate.status", {}, requestId("ops-gate"));
+      const reviews = await api.request(
+        "qc.list_reviews",
+        { open_only: true },
+        requestId("ops-qc"),
+      );
+      const exports = await api.request(
+        "export.list",
+        { limit: 20 },
+        requestId("ops-exports"),
+      );
+      const comps = await api.request("components.probe", {}, requestId("ops-comp"));
+      const rate = await api.request("grok.rate_status", {}, requestId("ops-rate"));
+      const openReviews = (
+        (reviews.items as unknown[] | undefined) ??
+        (reviews.reviews as unknown[] | undefined) ??
+        []
+      ).length;
+      const exportCount = ((exports.exports as unknown[] | undefined) ?? []).length;
+      const cosy = (
+        (comps.components as Record<string, Record<string, unknown>> | undefined)
+          ?.cosyvoice3?.status ?? "unknown"
+      );
+      setOpsSummary({
+        openReviews,
+        exportCount,
+        readyBatch: Boolean(status.ready_for_batch_production),
+        readyExport: Boolean(status.ready_for_export),
+        cosyStatus: String(cosy),
+        grokCalls: Number(rate.calls ?? 0),
+      });
+      setNotice({
+        tone: "success",
+        text: `总览刷新 · reviews=${openReviews} exports=${exportCount} batch=${String(status.ready_for_batch_production)}`,
+      });
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const loadGateBoard = async () => {
+    setBusy("gate-board");
+    try {
+      const status = await api.request("gate.status", {}, requestId("gate-board"));
+      const gates = (status.gates as Record<string, Record<string, unknown>> | undefined) ?? {};
+      const order = [
+        "story_package",
+        "identity_and_locations",
+        "episode_storyboard_and_dialogue",
+        "episode_rough_cut",
+      ];
+      const board = order.map((type) => {
+        const g = gates[type] ?? {};
+        return {
+          type,
+          status: String(g.status ?? "unknown"),
+          valid: Boolean(g.valid),
+          ready: Boolean(g.ready),
+          gateId: g.id ? String(g.id) : undefined,
+        };
+      });
+      setGateBoard(board);
+      setGateSummary({
+        ready: Boolean(status.ready_for_batch_production),
+        storyStatus: board[0]?.status ?? "",
+        looksStatus: board[1]?.status ?? "",
+        storyValid: board[0]?.valid ?? false,
+        looksValid: board[1]?.valid ?? false,
+        boardStatus: board[2]?.status,
+        roughStatus: board[3]?.status,
+        readyExport: Boolean(status.ready_for_export),
+      });
+      setNotice({
+        tone: status.ready_for_batch_production ? "success" : "warning",
+        text: `确认门板 · batch=${String(status.ready_for_batch_production)} export=${String(status.ready_for_export)}`,
+      });
+      setView("gates");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const evaluateAndConfirmGate = async (gateType: string) => {
+    setBusy(`gate-${gateType}`);
+    try {
+      const evaluated = await api.request(
+        "gate.evaluate",
+        { gate_type: gateType },
+        requestId("gate-eval"),
+      );
+      if (evaluated.status === "pending" && evaluated.ready && evaluated.id) {
+        await api.request(
+          "gate.confirm",
+          {
+            gate_id: String(evaluated.id),
+            confirmation_note: `ui confirm ${gateType}`,
+          },
+          requestId("gate-confirm"),
+        );
+      } else if (
+        evaluated.status === "pending" &&
+        !evaluated.ready &&
+        evaluated.id
+      ) {
+        setNotice({
+          tone: "warning",
+          text: `${gateType} 未就绪，无法确认 · ready=false`,
+        });
+        await loadGateBoard();
+        return;
+      }
+      setNotice({
+        tone: "success",
+        text: `${gateType} → ${String(evaluated.status)}`,
+      });
+      await loadGateBoard();
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+      setBusy(null);
+    }
+  };
+
+  const confirmGateById = async (gateId: string, gateType: string) => {
+    setBusy("gate-confirm-id");
+    try {
+      await api.request(
+        "gate.confirm",
+        { gate_id: gateId, confirmation_note: `ui ${gateType}` },
+        requestId("gate-confirm-id"),
+      );
+      setNotice({ tone: "success", text: `已确认 ${gateType}` });
+      await loadGateBoard();
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+      setBusy(null);
+    }
+  };
+
+  const jobAction = async (
+    method: "job.pause" | "job.resume" | "job.cancel" | "job.retry",
+    jobId: string,
+  ) => {
+    setBusy(method);
+    try {
+      await api.request(method, { job_id: jobId }, requestId(method));
+      setNotice({ tone: "success", text: `${method} · ${jobId.slice(0, 8)}` });
+      await refreshProjectState();
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const loadMusicLibrary = async () => {
+    setBusy("music-lib");
+    try {
+      const res = await api.request("music.list", {}, requestId("music-list"));
+      const items = (res.items as Array<Record<string, unknown>> | undefined) ?? [];
+      setMusicItems(
+        items.map((item) => ({
+          id: String(item.id ?? ""),
+          title: String(item.title ?? ""),
+          status: String(item.confirmation_status ?? item.status ?? ""),
+          kind: String(item.kind ?? "bgm"),
+        })),
+      );
+      setNotice({ tone: "success", text: `音乐库 · ${items.length} 条` });
+      setView("music");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const importDemoMusic = async () => {
+    setBusy("music-import");
+    try {
+      await api.request(
+        "music.import",
+        { title: `demo-bgm-${Date.now()}`, kind: "bgm" },
+        requestId("music-import"),
+      );
+      await loadMusicLibrary();
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+      setBusy(null);
+    }
+  };
+
+  const confirmMusicItem = async (itemId: string) => {
+    setBusy("music-confirm");
+    try {
+      await api.request(
+        "music.confirm",
+        { item_id: itemId },
+        requestId("music-confirm"),
+      );
+      setNotice({ tone: "success", text: `音乐已确认 · ${itemId.slice(0, 8)}` });
+      await loadMusicLibrary();
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+      setBusy(null);
+    }
+  };
+
+  const loadReworkPanel = async () => {
+    setBusy("rework");
+    try {
+      const boards = await api.request("storyboard.list", {}, requestId("rw-sb"));
+      const storyboards =
+        (boards.storyboards as Array<Record<string, unknown>> | undefined) ?? [];
+      if (!storyboards[0]?.id) {
+        setStaleItems([]);
+        setNotice({ tone: "warning", text: "无分镜，无法返工" });
+        setView("rework");
+        return;
+      }
+      const detail = await api.request(
+        "storyboard.get",
+        { storyboard_id: String(storyboards[0].id) },
+        requestId("rw-get"),
+      );
+      const rev =
+        (detail.current_revision as Record<string, unknown> | undefined) ?? {};
+      const revId = String(rev.id ?? "");
+      const prod = await api.request(
+        "production.list",
+        { storyboard_revision_id: revId },
+        requestId("rw-prod"),
+      );
+      const items = (prod.items as Array<Record<string, unknown>> | undefined) ?? [];
+      setStaleItems(
+        items.map((item) => ({
+          id: String(item.id ?? ""),
+          status: String(item.status ?? ""),
+          shot: String(item.shot_revision_id ?? "").slice(0, 8),
+          shotRevisionId: String(item.shot_revision_id ?? ""),
+          locked: Boolean(item.locked),
+        })),
+      );
+      setNotice({
+        tone: "success",
+        text: `返工面板 · items=${items.length} stale=${items.filter((i) => i.stale || i.status === "stale").length}`,
+      });
+      setView("rework");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const markShotStale = async (itemId: string, shotRevisionId: string) => {
+    setBusy("mark-stale");
+    try {
+      await api.request(
+        "production.mark_stale",
+        { upstream_type: "shot_revision", upstream_id: shotRevisionId },
+        requestId("mark-stale"),
+      );
+      setNotice({ tone: "success", text: "已标记上游变更 → stale 传播" });
+      await loadReworkPanel();
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+      setBusy(null);
+    }
+  };
+
+  const reexecuteItem = async (itemId: string) => {
+    setBusy("reexec");
+    try {
+      await api.request(
+        "production.execute",
+        { item_id: itemId },
+        requestId("prod-exec"),
+      );
+      setNotice({ tone: "success", text: `已重跑 · ${itemId.slice(0, 8)}` });
+      await loadReworkPanel();
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+      setBusy(null);
+    }
+  };
+
   const navItems: { id: ShellView; label: string }[] = [
     { id: "overview", label: "项目总览" },
     { id: "project", label: "项目" },
@@ -2374,6 +2696,8 @@ export function App({
     { id: "review", label: "审核队列" },
     { id: "timeline", label: "时间线" },
     { id: "exports", label: "导出中心" },
+    { id: "music", label: "音乐库" },
+    { id: "rework", label: "局部返工" },
     { id: "components", label: "组件/限流" },
     { id: "acceptance", label: "M5 验收" },
     { id: "drafts", label: "草稿修订" },
@@ -2504,6 +2828,46 @@ export function App({
                   </button>
                 </div>
               </div>
+              <div className="action-grid compact">
+                <button
+                  aria-label="刷新运营摘要"
+                  className="action"
+                  onClick={() => void loadOpsSummary()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">O1</span>
+                  <span>
+                    <strong>刷新运营摘要</strong>
+                    <small>gates · reviews · exports · components</small>
+                  </span>
+                </button>
+              </div>
+              {opsSummary ? (
+                <div className="overview-grid" aria-label="运营摘要">
+                  <article className="stat-card">
+                    <span>待审异常</span>
+                    <strong>{opsSummary.openReviews}</strong>
+                    <small>qc open</small>
+                  </article>
+                  <article className="stat-card">
+                    <span>导出记录</span>
+                    <strong>{opsSummary.exportCount}</strong>
+                    <small>export.list</small>
+                  </article>
+                  <article className="stat-card">
+                    <span>批量就绪</span>
+                    <strong>{opsSummary.readyBatch ? "YES" : "NO"}</strong>
+                    <small>export {opsSummary.readyExport ? "ready" : "blocked"}</small>
+                  </article>
+                  <article className="stat-card">
+                    <span>TTS / Grok</span>
+                    <strong>{opsSummary.cosyStatus}</strong>
+                    <small>grok calls {opsSummary.grokCalls}</small>
+                  </article>
+                </div>
+              ) : (
+                <p className="empty-hint">点击「刷新运营摘要」加载门禁/审核/导出健康度。</p>
+              )}
               <p className="project-meta">
                 当前项目：<strong>{project.name}</strong> · {project.root_path}
               </p>
@@ -3237,6 +3601,134 @@ export function App({
         </section>
       )}
 
+
+      {view === "music" && (
+        <section className="console-panel" aria-label="音乐库">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">MUSIC LIBRARY</p>
+              <h3>音乐入库与人工确认</h3>
+            </div>
+            <span className="panel-number">M4.05</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="刷新音乐库"
+                  className="action primary"
+                  onClick={() => void loadMusicLibrary()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">U1</span>
+                  <span>
+                    <strong>刷新音乐库</strong>
+                    <small>music.list</small>
+                  </span>
+                </button>
+                <button
+                  aria-label="导入演示音乐"
+                  className="action"
+                  onClick={() => void importDemoMusic()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">U2</span>
+                  <span>
+                    <strong>导入演示 BGM</strong>
+                    <small>pending → confirm</small>
+                  </span>
+                </button>
+              </div>
+              {musicItems.length === 0 ? (
+                <p className="empty-hint">库为空。导入后需人工确认才能进入母版。</p>
+              ) : (
+                <ul className="job-list" aria-label="音乐库列表">
+                  {musicItems.map((item) => (
+                    <li key={item.id}>
+                      <code>{item.status}</code> <code>{item.kind}</code> {item.title}{" "}
+                      {item.status === "pending" ? (
+                        <button
+                          type="button"
+                          aria-label={`确认音乐 ${item.title}`}
+                          onClick={() => void confirmMusicItem(item.id)}
+                          disabled={busy !== null}
+                        >
+                          确认入库
+                        </button>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </section>
+      )}
+
+      {view === "rework" && (
+        <section className="console-panel" aria-label="局部返工">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">LOCAL REWORK · STALE</p>
+              <h3>上游变更与局部重跑</h3>
+            </div>
+            <span className="panel-number">M3.11</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="刷新返工列表"
+                  className="action primary"
+                  onClick={() => void loadReworkPanel()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">W1</span>
+                  <span>
+                    <strong>刷新生产项</strong>
+                    <small>stale · execute</small>
+                  </span>
+                </button>
+              </div>
+              {staleItems.length === 0 ? (
+                <p className="empty-hint">无生产项。请先批量生产镜头。</p>
+              ) : (
+                <ul className="job-list" aria-label="返工生产项列表">
+                  {staleItems.map((item) => (
+                    <li key={item.id}>
+                      <code>{item.status}</code> shot {item.shot}{" "}
+                      {item.locked ? <code>locked</code> : null}{" "}
+                      <button
+                        type="button"
+                        aria-label={`标记 stale ${item.id.slice(0, 6)}`}
+                        onClick={() =>
+                          void markShotStale(item.id, item.shotRevisionId)
+                        }
+                        disabled={busy !== null || item.locked}
+                      >
+                        标记上游变更
+                      </button>{" "}
+                      <button
+                        type="button"
+                        aria-label={`重跑生产项 ${item.id.slice(0, 6)}`}
+                        onClick={() => void reexecuteItem(item.id)}
+                        disabled={busy !== null || item.locked}
+                      >
+                        重跑
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </section>
+      )}
+
       {view === "components" && (
         <section className="console-panel" aria-label="组件与限流">
           <div className="panel-heading">
@@ -3413,16 +3905,68 @@ export function App({
                 <button
                   aria-label="刷新确认门状态"
                   className="action"
-                  onClick={() => void refreshGateStatus()}
+                  onClick={() => void loadGateBoard()}
                   disabled={busy !== null}
                 >
                   <span className="action-no">G2</span>
                   <span>
                     <strong>刷新门状态</strong>
-                    <small>gate.status</small>
+                    <small>gate.status 四门</small>
+                  </span>
+                </button>
+                <button
+                  aria-label="评估并确认故事包门"
+                  className="action"
+                  onClick={() => void evaluateAndConfirmGate("story_package")}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">G3</span>
+                  <span>
+                    <strong>确认故事包门</strong>
+                    <small>evaluate + confirm</small>
+                  </span>
+                </button>
+                <button
+                  aria-label="评估并确认定妆场景门"
+                  className="action"
+                  onClick={() => void evaluateAndConfirmGate("identity_and_locations")}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">G4</span>
+                  <span>
+                    <strong>确认定妆场景门</strong>
+                    <small>evaluate + confirm</small>
                   </span>
                 </button>
               </div>
+              {gateBoard.length > 0 ? (
+                <ul className="job-list" aria-label="确认门操作板">
+                  {gateBoard.map((gate) => (
+                    <li key={gate.type}>
+                      <code>{gate.status}</code> {gate.type} · ready=
+                      {String(gate.ready)} · valid={String(gate.valid)}{" "}
+                      {gate.gateId && gate.status === "pending" && gate.ready ? (
+                        <button
+                          type="button"
+                          aria-label={`确认门 ${gate.type}`}
+                          onClick={() => void confirmGateById(gate.gateId!, gate.type)}
+                          disabled={busy !== null}
+                        >
+                          确认
+                        </button>
+                      ) : null}{" "}
+                      <button
+                        type="button"
+                        aria-label={`评估门 ${gate.type}`}
+                        onClick={() => void evaluateAndConfirmGate(gate.type)}
+                        disabled={busy !== null}
+                      >
+                        评估
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
               {!gateSummary ? (
                 <p className="empty-hint">尚未评估确认门。</p>
               ) : (
@@ -4084,7 +4628,47 @@ export function App({
               {jobs.map((job) => (
                 <li key={job.id}>
                   <code>{job.status}</code> {job.kind} · 尝试 {job.attempts}
-                  {job.last_error ? ` · ${job.last_error}` : ""}
+                  {job.last_error ? ` · ${job.last_error}` : ""}{" "}
+                  {(job.status === "queued" || job.status === "running") && (
+                    <>
+                      <button
+                        type="button"
+                        aria-label={`暂停任务 ${job.id.slice(0, 6)}`}
+                        onClick={() => void jobAction("job.pause", job.id)}
+                        disabled={busy !== null}
+                      >
+                        暂停
+                      </button>{" "}
+                      <button
+                        type="button"
+                        aria-label={`取消任务 ${job.id.slice(0, 6)}`}
+                        onClick={() => void jobAction("job.cancel", job.id)}
+                        disabled={busy !== null}
+                      >
+                        取消
+                      </button>
+                    </>
+                  )}
+                  {job.status === "paused" && (
+                    <button
+                      type="button"
+                      aria-label={`恢复任务 ${job.id.slice(0, 6)}`}
+                      onClick={() => void jobAction("job.resume", job.id)}
+                      disabled={busy !== null}
+                    >
+                      恢复
+                    </button>
+                  )}
+                  {(job.status === "failed" || job.status === "cancelled") && (
+                    <button
+                      type="button"
+                      aria-label={`重试任务 ${job.id.slice(0, 6)}`}
+                      onClick={() => void jobAction("job.retry", job.id)}
+                      disabled={busy !== null}
+                    >
+                      重试
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -4202,3 +4786,4 @@ export function App({
     </main>
   );
 }
+

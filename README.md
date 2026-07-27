@@ -61,7 +61,8 @@ CosyVoice：`WORKFLOW_COSYVOICE_BIN` 或 `components.register`；未就绪时回
 生产 RPC：`production.batch` / `list` / `mark_stale` / `lock`；`qc.list_reviews` / `resolve`。  
 后期 RPC：`tts.authorize` / `synthesize`；`lipsync.plan`；`caption.*`；`music.*`；`timeline.*`；`mix.create`；`render.timeline`；`cover.create`；`export.episode` / `export.list`。  
 生产工作台 UI：镜头墙 · 审核队列 · 资产预览 · 时间线 · 导出中心。  
-任务 RPC：`job.enqueue` / `get` / `list` / `claim` / `complete` / `fail` / `cancel` / `pause` / `resume` / `reclaim_expired`。  
+任务 RPC：`job.enqueue` / `get` / `list` / `claim` / `complete` / `fail` / `cancel` / `pause` / `resume` / `retry` / `reclaim_expired`。  
+生产：`production.execute`；运营台：确认门板 / 任务操作 / 音乐确认 / 局部返工 / 总览运营摘要。  
 环境 RPC：`env.summary`、`env.resolve`（必须传 `allow_keys`）。  
 快照 RPC：`snapshot.create`、`snapshot.list`。  
 日志/诊断 RPC：`log.write`、`log.tail`、`diagnostics.create_pack`（脱敏 JSONL，打包不含 `.env.local`/媒体原件）。  

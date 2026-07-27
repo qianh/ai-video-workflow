@@ -332,6 +332,32 @@ class JobQueue:
             raise
         return self.get(job_id)
 
+    def retry(self, job_id: str) -> JobRecord:
+        """Requeue a failed (or cancelled) job for another attempt."""
+        job = self.get(job_id)
+        if job.status not in {"failed", "cancelled"}:
+            raise ValueError(f"cannot retry job in status: {job.status}")
+        now = utc_now()
+        self._db.connection.execute("BEGIN IMMEDIATE")
+        try:
+            self._db.execute(
+                """
+                UPDATE jobs
+                SET status = 'queued',
+                    lease_owner = NULL,
+                    lease_until = NULL,
+                    last_error = NULL,
+                    updated_at = ?
+                WHERE id = ? AND status IN ('failed', 'cancelled')
+                """,
+                (now, job_id),
+            )
+            self._db.connection.execute("COMMIT")
+        except Exception:
+            self._db.connection.execute("ROLLBACK")
+            raise
+        return self.get(job_id)
+
     def reclaim_expired(self, *, now: str | None = None) -> int:
         """Return expired running jobs to queued for retry or fail if attempts exhausted."""
 

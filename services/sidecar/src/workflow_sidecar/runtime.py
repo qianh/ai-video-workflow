@@ -969,6 +969,16 @@ class SidecarRuntime:
                 )
             )
             return
+        if method == "production.execute":
+            item_id = p.get("item_id")
+            if not isinstance(item_id, str):
+                raise ValueError("item_id must be a string")
+            self._emit(
+                success_response(
+                    request.id, self._production().execute_item(item_id)
+                )
+            )
+            return
         if method == "production.mark_stale":
             upstream_type = p.get("upstream_type")
             upstream_id = p.get("upstream_id")
@@ -3113,6 +3123,13 @@ class SidecarRuntime:
             if not isinstance(job_id, str) or not job_id:
                 raise ValueError("job_id must be a non-empty string")
             self._emit(success_response(request.id, queue.resume(job_id).as_dict()))
+            return
+
+        if method == "job.retry":
+            job_id = params.get("job_id")
+            if not isinstance(job_id, str) or not job_id:
+                raise ValueError("job_id must be a non-empty string")
+            self._emit(success_response(request.id, queue.retry(job_id).as_dict()))
             return
 
         if method == "job.reclaim_expired":

@@ -805,6 +805,107 @@ describe("M1 shell", () => {
     expect(await screen.findByLabelText("导出任务列表")).toHaveTextContent("master");
   });
 
+
+  it("ops gates music rework jobs controls", async () => {
+    const api = createApi({
+      request: vi.fn().mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+        if (method === "project.current") {
+          return {
+            project: {
+              id: "p1",
+              name: "试播项目",
+              root_path: "/tmp/demo",
+              schema_version: 16,
+            },
+          };
+        }
+        if (method === "project.list_recent") return { projects: [] };
+        if (method === "job.list") {
+          return {
+            jobs: [
+              { id: "j1", kind: "demo.ping", status: "queued", attempts: 0 },
+              { id: "j2", kind: "demo.fail", status: "failed", attempts: 1, last_error: "x" },
+            ],
+          };
+        }
+        if (method === "project.overview") return emptyOverview;
+        if (method === "gate.status") {
+          return {
+            ready_for_batch_production: true,
+            ready_for_export: false,
+            gates: {
+              story_package: { id: "g1", status: "confirmed", valid: true, ready: true },
+              identity_and_locations: { id: "g2", status: "pending", valid: true, ready: true },
+              episode_storyboard_and_dialogue: { status: "unknown", valid: false, ready: false },
+              episode_rough_cut: { status: "unknown", valid: false, ready: false },
+            },
+          };
+        }
+        if (method === "gate.evaluate") {
+          return { id: "g2", status: "pending", ready: true, gate_type: params?.gate_type };
+        }
+        if (method === "gate.confirm") return { id: "g2", status: "confirmed" };
+        if (method === "qc.list_reviews") return { items: [] };
+        if (method === "export.list") return { exports: [{ id: "e1" }] };
+        if (method === "components.probe") {
+          return { components: { cosyvoice3: { status: "not_installed" } } };
+        }
+        if (method === "grok.rate_status") return { calls: 2, budget: 50 };
+        if (method === "music.list") {
+          return {
+            items: [{ id: "m1", title: "night-bgm", confirmation_status: "pending", kind: "bgm" }],
+          };
+        }
+        if (method === "music.import") {
+          return { id: "m2", title: "demo", confirmation_status: "pending" };
+        }
+        if (method === "music.confirm") {
+          return { id: "m1", confirmation_status: "confirmed" };
+        }
+        if (method === "storyboard.list") return { storyboards: [{ id: "sb1" }] };
+        if (method === "storyboard.get") {
+          return { current_revision: { id: "rev1" }, shots: [] };
+        }
+        if (method === "production.list") {
+          return {
+            items: [
+              {
+                id: "pi1",
+                status: "succeeded",
+                shot_revision_id: "sr-full-id-1234",
+                locked: false,
+              },
+            ],
+          };
+        }
+        if (method === "production.mark_stale") return { count: 1 };
+        if (method === "production.execute") return { id: "pi1", status: "succeeded" };
+        if (method === "job.pause" || method === "job.cancel" || method === "job.retry" || method === "job.resume") {
+          return { id: params?.job_id, status: "ok" };
+        }
+        return { status: "ok" };
+      }),
+    });
+    const user = userEvent.setup();
+    render(<App api={api} showDiagnostics />);
+    await user.click(await screen.findByRole("button", { name: "项目总览" }));
+    await user.click(await screen.findByRole("button", { name: "刷新运营摘要" }));
+    expect(await screen.findByLabelText("运营摘要")).toHaveTextContent("导出记录");
+    await user.click(await screen.findByRole("button", { name: "确认门" }));
+    await user.click(await screen.findByRole("button", { name: "刷新确认门状态" }));
+    expect(await screen.findByLabelText("确认门操作板")).toHaveTextContent("story_package");
+    await user.click(await screen.findByRole("button", { name: "任务中心" }));
+    expect(await screen.findByLabelText("任务列表")).toHaveTextContent("demo.ping");
+    expect(screen.getByRole("button", { name: "暂停任务 j1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试任务 j2" })).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "音乐库" }));
+    await user.click(await screen.findByRole("button", { name: "刷新音乐库" }));
+    expect(await screen.findByLabelText("音乐库列表")).toHaveTextContent("night-bgm");
+    await user.click(await screen.findByRole("button", { name: "局部返工" }));
+    await user.click(await screen.findByRole("button", { name: "刷新返工列表" }));
+    expect(await screen.findByLabelText("返工生产项列表")).toHaveTextContent("succeeded");
+  });
+
   it("runs M5 continuous acceptance and shows grade", async () => {
     const api = createApi({
       request: vi.fn().mockImplementation(async (method: string) => {
