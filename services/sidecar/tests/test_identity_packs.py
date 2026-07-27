@@ -34,7 +34,7 @@ def test_identity_pack_look_confirm_gate(tmp_path: Path) -> None:
     parent = tmp_path / "projects"
     parent.mkdir()
     project = service.create_project(parent, "Looks")
-    assert project.schema_version >= 10
+    assert project.schema_version >= 11
 
     db = service.require_project_db()
     root = Path(project.root_path)

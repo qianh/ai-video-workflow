@@ -44,6 +44,7 @@ type ShellView =
   | "package"
   | "scripts"
   | "characters"
+  | "world"
   | "drafts"
   | "generation"
   | "jobs"
@@ -177,6 +178,13 @@ export function App({
     lookCount: number;
     gateReady: boolean;
   } | null>(null);
+  const [worldSummary, setWorldSummary] = useState<{
+    locationCount: number;
+    propCount: number;
+    linkCount: number;
+    locationNames: string[];
+    coreGateReady: boolean;
+  } | null>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -248,6 +256,7 @@ export function App({
       setPackageRevisions([]);
       setScriptSummary(null);
       setCharacterSummary(null);
+      setWorldSummary(null);
     }
   }, [api]);
 
@@ -685,6 +694,143 @@ export function App({
       });
       await refreshPackState();
       setView("packs");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const buildWorldSpace = async () => {
+    setBusy("world-setup");
+    try {
+      const market = await api.request(
+        "location.create",
+        {
+          name: "夜市东口",
+          location_type: "exterior",
+          description: "雨夜摊位区",
+          is_core: true,
+        },
+        requestId("loc-market"),
+      );
+      const alley = await api.request(
+        "location.create",
+        {
+          name: "后巷",
+          location_type: "exterior",
+          description: "狭窄后巷",
+        },
+        requestId("loc-alley"),
+      );
+      await api.request(
+        "location.approve",
+        {
+          revision_id: String(
+            (market.current_revision as { id?: string } | undefined)?.id ?? "",
+          ),
+        },
+        requestId("loc-market-ok"),
+      );
+      await api.request(
+        "location.approve",
+        {
+          revision_id: String(
+            (alley.current_revision as { id?: string } | undefined)?.id ?? "",
+          ),
+        },
+        requestId("loc-alley-ok"),
+      );
+      await api.request(
+        "spatial.add_link",
+        {
+          source_location_id: String(market.id),
+          target_location_id: String(alley.id),
+          link_type: "connected",
+          description: "东口通往后巷",
+        },
+        requestId("spatial-link"),
+      );
+      const prop = await api.request(
+        "prop.create",
+        {
+          name: "发光 U 盘",
+          appearance: "半透明冷蓝光",
+          state_notes: "首次出现在夜市",
+        },
+        requestId("prop-create"),
+      );
+      await api.request(
+        "prop.approve",
+        {
+          revision_id: String(
+            (prop.current_revision as { id?: string } | undefined)?.id ?? "",
+          ),
+        },
+        requestId("prop-ok"),
+      );
+      const pack = await api.request(
+        "location.create_pack",
+        {
+          location_id: String(market.id),
+          layout: { zones: ["stalls", "entrance"] },
+          direction_axis: "east-west",
+          primary_view: "from entrance looking east",
+          camera_angles: ["wide establishing", "medium stall"],
+          entrances: [{ id: "main", side: "west" }],
+          day_variant: { light: "overcast neon" },
+          night_variant: { light: "rain neon", wet_ground: true },
+        },
+        requestId("loc-pack"),
+      );
+      const packRev = String(
+        (pack.current_revision as { id?: string } | undefined)?.id ?? "",
+      );
+      await api.request(
+        "location.anchor_prop",
+        {
+          revision_id: packRev,
+          prop_id: String(prop.id),
+          anchor_label: "stall_floor",
+          position: { x: 1.2, y: 0, z: 0.4 },
+        },
+        requestId("loc-anchor"),
+      );
+      await api.request(
+        "location.confirm_pack",
+        { revision_id: packRev },
+        requestId("loc-confirm"),
+      );
+      const gate = await api.request(
+        "location.gate",
+        { location_id: String(market.id) },
+        requestId("loc-gate"),
+      );
+      const overview = await api.request(
+        "location.overview",
+        {},
+        requestId("loc-overview"),
+      );
+      const locations =
+        (overview.locations as Array<{
+          current_revision?: { name?: string };
+        }> | undefined) ?? [];
+      const props = (overview.props as unknown[] | undefined) ?? [];
+      const links = (overview.spatial_links as unknown[] | undefined) ?? [];
+      setWorldSummary({
+        locationCount: locations.length,
+        propCount: props.length,
+        linkCount: links.length,
+        locationNames: locations.map((item) =>
+          String(item.current_revision?.name ?? ""),
+        ),
+        coreGateReady: Boolean(gate.ready_for_production),
+      });
+      setNotice({
+        tone: "success",
+        text: `场景世界已确认 · locs=${locations.length} · props=${props.length} · links=${links.length} · gate=${String(gate.ready_for_production)}`,
+      });
+      setView("world");
     } catch (error) {
       setNotice({ tone: "warning", text: errorMessage(error) });
     } finally {
@@ -1285,6 +1431,7 @@ export function App({
     { id: "package", label: "故事包" },
     { id: "scripts", label: "分集剧本" },
     { id: "characters", label: "角色声音" },
+    { id: "world", label: "场景道具" },
     { id: "drafts", label: "草稿修订" },
     { id: "generation", label: "生成流水线" },
     { id: "jobs", label: "任务中心" },
@@ -1697,6 +1844,71 @@ export function App({
                   ))}
                 </ul>
               )}
+            </>
+          )}
+        </section>
+      )}
+
+      {view === "world" && (
+        <section className="console-panel" aria-label="场景道具">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">LOCATIONS · PROPS · SPACE</p>
+              <h3>场景包 · 空间关系 · 道具</h3>
+            </div>
+            <span className="panel-number">M2.11</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="创建样例场景与道具"
+                  className="action primary"
+                  onClick={() => void buildWorldSpace()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">W1</span>
+                  <span>
+                    <strong>创建并确认核心场景</strong>
+                    <small>location pack + spatial + prop anchor</small>
+                  </span>
+                </button>
+              </div>
+              {!worldSummary ? (
+                <p className="empty-hint">尚未创建场景世界。</p>
+              ) : (
+                <div className="overview-columns">
+                  <div>
+                    <h4>场景</h4>
+                    <ul className="job-list" aria-label="场景列表">
+                      {worldSummary.locationNames.map((name) => (
+                        <li key={name}>
+                          <code>location</code> {name}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <h4>统计</h4>
+                    <ul className="job-list" aria-label="场景统计">
+                      <li>场景 {worldSummary.locationCount}</li>
+                      <li>道具 {worldSummary.propCount}</li>
+                      <li>空间连接 {worldSummary.linkCount}</li>
+                      <li>
+                        核心门禁{" "}
+                        <code>
+                          {worldSummary.coreGateReady ? "ready" : "blocked"}
+                        </code>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+              <p className="empty-hint">
+                核心场景（is_core）需 confirm 场景包后才可批量生成相关镜头。
+              </p>
             </>
           )}
         </section>

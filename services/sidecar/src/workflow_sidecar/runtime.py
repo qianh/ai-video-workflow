@@ -27,6 +27,7 @@ from .persistence.drafts import DraftService
 from .persistence.episode_scripts import EpisodeScriptService
 from .persistence.generation import GenerationService
 from .persistence.identity_packs import IdentityPackService
+from .persistence.locations import LocationService
 from .persistence.story import StoryService
 from .persistence.story_package import StoryPackageService
 from .protocol import Request, error_response, event, success_response
@@ -223,6 +224,14 @@ class SidecarRuntime:
             await self._execute_identity(request)
             return
 
+        if (
+            request.method.startswith("location.")
+            or request.method.startswith("prop.")
+            or request.method.startswith("spatial.")
+        ):
+            await self._execute_locations(request)
+            return
+
         if request.method.startswith("job."):
             await self._execute_job(request)
             return
@@ -306,6 +315,10 @@ class SidecarRuntime:
             self._workspace.require_project_db(),
             Path(current.root_path),
         )
+
+    def _locations(self) -> LocationService:
+        self._workspace.require_project_db()
+        return LocationService(self._workspace.require_project_db())
 
     def _resolve_branch_id(self, params: dict[str, Any]) -> str:
         branch_id = params.get("branch_id")
@@ -486,6 +499,245 @@ class SidecarRuntime:
                 raise ValueError("limit must be an integer")
             result = svc.list_package_revisions(limit=limit)
             self._emit(success_response(request.id, {"revisions": result}))
+            return
+
+        self._emit(
+            error_response(
+                request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
+            )
+        )
+
+    async def _execute_locations(self, request: Request) -> None:
+        svc = self._locations()
+        method = request.method
+        params = request.params
+
+        if method == "location.create":
+            name = params.get("name")
+            if not isinstance(name, str):
+                raise ValueError("name must be a string")
+            result = svc.create_location(
+                branch_id=self._resolve_branch_id(params),
+                name=name,
+                location_type=params.get("location_type", "interior"),
+                description=params.get("description"),
+                is_core=bool(params.get("is_core", False)),
+                slug=params.get("slug"),
+                notes=params.get("notes"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "location.list":
+            limit = params.get("limit", 50)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            branch_id = params.get("branch_id")
+            if branch_id is None:
+                branch_id = self._story().primary_branch_id()
+            elif not isinstance(branch_id, str):
+                raise ValueError("branch_id must be a string")
+            result = svc.list_locations(branch_id=branch_id, limit=limit)
+            self._emit(success_response(request.id, {"locations": result}))
+            return
+
+        if method == "location.approve":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            self._emit(
+                success_response(
+                    request.id, svc.approve_location_revision(revision_id)
+                )
+            )
+            return
+
+        if method == "location.mark_core":
+            location_id = params.get("location_id")
+            if not isinstance(location_id, str):
+                raise ValueError("location_id must be a string")
+            result = svc.mark_core(
+                location_id, is_core=bool(params.get("is_core", True))
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "location.create_pack":
+            location_id = params.get("location_id")
+            if not isinstance(location_id, str):
+                raise ValueError("location_id must be a string")
+            result = svc.create_pack(
+                location_id=location_id,
+                layout=params.get("layout"),
+                direction_axis=params.get("direction_axis"),
+                primary_view=params.get("primary_view"),
+                camera_angles=params.get("camera_angles"),
+                entrances=params.get("entrances"),
+                furniture_anchors=params.get("furniture_anchors"),
+                day_variant=params.get("day_variant"),
+                night_variant=params.get("night_variant"),
+                reference_asset_ids=params.get("reference_asset_ids"),
+                notes=params.get("notes"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "location.update_pack":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            result = svc.update_pack_revision(
+                revision_id,
+                layout=params.get("layout"),
+                direction_axis=params.get("direction_axis"),
+                primary_view=params.get("primary_view"),
+                camera_angles=params.get("camera_angles"),
+                entrances=params.get("entrances"),
+                furniture_anchors=params.get("furniture_anchors"),
+                day_variant=params.get("day_variant"),
+                night_variant=params.get("night_variant"),
+                reference_asset_ids=params.get("reference_asset_ids"),
+                notes=params.get("notes"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "location.validate_pack":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            self._emit(success_response(request.id, svc.validate_pack(revision_id)))
+            return
+
+        if method == "location.approve_pack":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            self._emit(success_response(request.id, svc.approve_pack(revision_id)))
+            return
+
+        if method == "location.confirm_pack":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            self._emit(success_response(request.id, svc.confirm_pack(revision_id)))
+            return
+
+        if method == "location.list_packs":
+            location_id = params.get("location_id")
+            limit = params.get("limit", 50)
+            if location_id is not None and not isinstance(location_id, str):
+                raise ValueError("location_id must be a string")
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            result = svc.list_packs(location_id=location_id, limit=limit)
+            self._emit(success_response(request.id, {"packs": result}))
+            return
+
+        if method == "location.gate":
+            location_id = params.get("location_id")
+            if not isinstance(location_id, str):
+                raise ValueError("location_id must be a string")
+            self._emit(
+                success_response(request.id, svc.production_gate(location_id))
+            )
+            return
+
+        if method == "location.overview":
+            result = svc.world_overview(self._resolve_branch_id(params))
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "spatial.add_link":
+            source = params.get("source_location_id")
+            target = params.get("target_location_id")
+            link_type = params.get("link_type")
+            if not all(isinstance(x, str) for x in (source, target, link_type)):
+                raise ValueError(
+                    "source_location_id, target_location_id and link_type must be strings"
+                )
+            result = svc.add_spatial_link(
+                branch_id=self._resolve_branch_id(params),
+                source_location_id=source,
+                target_location_id=target,
+                link_type=link_type,
+                description=params.get("description"),
+                bidirectional=bool(params.get("bidirectional", True)),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "spatial.list":
+            limit = params.get("limit", 100)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            branch_id = params.get("branch_id")
+            if branch_id is None:
+                branch_id = self._story().primary_branch_id()
+            elif not isinstance(branch_id, str):
+                raise ValueError("branch_id must be a string")
+            result = svc.list_spatial_links(branch_id=branch_id, limit=limit)
+            self._emit(success_response(request.id, {"links": result}))
+            return
+
+        if method == "prop.create":
+            name = params.get("name")
+            appearance = params.get("appearance")
+            if not isinstance(name, str) or not isinstance(appearance, str):
+                raise ValueError("name and appearance must be strings")
+            result = svc.create_prop(
+                branch_id=self._resolve_branch_id(params),
+                name=name,
+                appearance=appearance,
+                owner_character_id=params.get("owner_character_id"),
+                state_notes=params.get("state_notes"),
+                is_key_prop=bool(params.get("is_key_prop", True)),
+                slug=params.get("slug"),
+                notes=params.get("notes"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "prop.list":
+            limit = params.get("limit", 50)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            branch_id = params.get("branch_id")
+            if branch_id is None:
+                branch_id = self._story().primary_branch_id()
+            elif not isinstance(branch_id, str):
+                raise ValueError("branch_id must be a string")
+            result = svc.list_props(branch_id=branch_id, limit=limit)
+            self._emit(success_response(request.id, {"props": result}))
+            return
+
+        if method == "prop.approve":
+            revision_id = params.get("revision_id")
+            if not isinstance(revision_id, str):
+                raise ValueError("revision_id must be a string")
+            self._emit(
+                success_response(request.id, svc.approve_prop_revision(revision_id))
+            )
+            return
+
+        if method == "location.anchor_prop":
+            revision_id = params.get("revision_id")
+            prop_id = params.get("prop_id")
+            anchor_label = params.get("anchor_label")
+            if not all(
+                isinstance(x, str) for x in (revision_id, prop_id, anchor_label)
+            ):
+                raise ValueError(
+                    "revision_id, prop_id and anchor_label must be strings"
+                )
+            result = svc.anchor_prop(
+                location_pack_revision_id=revision_id,
+                prop_id=prop_id,
+                anchor_label=anchor_label,
+                position=params.get("position"),
+                visibility=params.get("visibility", "visible"),
+            )
+            self._emit(success_response(request.id, result))
             return
 
         self._emit(

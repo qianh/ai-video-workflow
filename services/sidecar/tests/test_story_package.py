@@ -21,7 +21,7 @@ def test_world_rules_timeline_package_flow(tmp_path: Path) -> None:
     parent = tmp_path / "projects"
     parent.mkdir()
     project = service.create_project(parent, "Package")
-    assert project.schema_version >= 10
+    assert project.schema_version >= 11
 
     db = service.require_project_db()
     story = StoryService(db, Path(project.root_path))

@@ -682,6 +682,140 @@ PROJECT_MIGRATIONS: list[Migration] = [
             ON look_candidates(identity_pack_revision_id, candidate_no);
         """,
     ),
+    (
+        11,
+        """
+        CREATE TABLE locations (
+            id TEXT PRIMARY KEY,
+            branch_id TEXT NOT NULL,
+            slug TEXT,
+            status TEXT NOT NULL,
+            is_core INTEGER NOT NULL DEFAULT 0,
+            current_revision_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX idx_locations_branch ON locations(branch_id, status);
+
+        CREATE TABLE location_revisions (
+            id TEXT PRIMARY KEY,
+            location_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            name TEXT NOT NULL,
+            location_type TEXT NOT NULL,
+            description TEXT,
+            content_hash TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(location_id) REFERENCES locations(id),
+            UNIQUE(location_id, revision_no)
+        );
+
+        CREATE TABLE location_packs (
+            id TEXT PRIMARY KEY,
+            location_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            current_revision_id TEXT,
+            confirmed_revision_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(location_id) REFERENCES locations(id)
+        );
+
+        CREATE INDEX idx_location_packs ON location_packs(location_id, status);
+
+        CREATE TABLE location_pack_revisions (
+            id TEXT PRIMARY KEY,
+            pack_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            layout_json TEXT NOT NULL DEFAULT '{}',
+            direction_axis TEXT,
+            primary_view TEXT,
+            camera_angles_json TEXT NOT NULL DEFAULT '[]',
+            entrances_json TEXT NOT NULL DEFAULT '[]',
+            furniture_anchors_json TEXT NOT NULL DEFAULT '[]',
+            day_variant_json TEXT NOT NULL DEFAULT '{}',
+            night_variant_json TEXT NOT NULL DEFAULT '{}',
+            reference_asset_ids_json TEXT NOT NULL DEFAULT '[]',
+            content_hash TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            confirmed_at TEXT,
+            FOREIGN KEY(pack_id) REFERENCES location_packs(id),
+            UNIQUE(pack_id, revision_no)
+        );
+
+        CREATE INDEX idx_location_pack_revisions
+            ON location_pack_revisions(pack_id, revision_no);
+
+        CREATE TABLE location_spatial_links (
+            id TEXT PRIMARY KEY,
+            branch_id TEXT NOT NULL,
+            source_location_id TEXT NOT NULL,
+            target_location_id TEXT NOT NULL,
+            link_type TEXT NOT NULL,
+            description TEXT,
+            bidirectional INTEGER NOT NULL DEFAULT 1,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(source_location_id) REFERENCES locations(id),
+            FOREIGN KEY(target_location_id) REFERENCES locations(id)
+        );
+
+        CREATE INDEX idx_spatial_links_branch
+            ON location_spatial_links(branch_id, status);
+
+        CREATE TABLE props (
+            id TEXT PRIMARY KEY,
+            branch_id TEXT NOT NULL,
+            slug TEXT,
+            status TEXT NOT NULL,
+            is_key_prop INTEGER NOT NULL DEFAULT 1,
+            current_revision_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX idx_props_branch ON props(branch_id, status);
+
+        CREATE TABLE prop_revisions (
+            id TEXT PRIMARY KEY,
+            prop_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            name TEXT NOT NULL,
+            appearance TEXT NOT NULL,
+            owner_character_id TEXT,
+            state_notes TEXT,
+            content_hash TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(prop_id) REFERENCES props(id),
+            FOREIGN KEY(owner_character_id) REFERENCES characters(id),
+            UNIQUE(prop_id, revision_no)
+        );
+
+        CREATE TABLE location_prop_anchors (
+            id TEXT PRIMARY KEY,
+            location_pack_revision_id TEXT NOT NULL,
+            prop_id TEXT NOT NULL,
+            anchor_label TEXT NOT NULL,
+            position_json TEXT NOT NULL DEFAULT '{}',
+            visibility TEXT NOT NULL DEFAULT 'visible',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(location_pack_revision_id)
+                REFERENCES location_pack_revisions(id),
+            FOREIGN KEY(prop_id) REFERENCES props(id),
+            UNIQUE(location_pack_revision_id, prop_id, anchor_label)
+        );
+
+        CREATE INDEX idx_prop_anchors_revision
+            ON location_prop_anchors(location_pack_revision_id);
+        """,
+    ),
 ]
 
 

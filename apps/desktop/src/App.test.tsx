@@ -506,6 +506,103 @@ describe("M1 shell", () => {
     );
   });
 
+  it("creates locations props spatial links and confirms core pack", async () => {
+    let locCount = 0;
+    const api = createApi({
+      request: vi.fn().mockImplementation(async (method: string) => {
+        if (method === "project.current") {
+          return {
+            project: {
+              id: "p1",
+              name: "试播项目",
+              root_path: "/tmp/demo",
+              schema_version: 11,
+            },
+          };
+        }
+        if (method === "project.list_recent") return { projects: [] };
+        if (method === "job.list") return { jobs: [] };
+        if (method === "project.overview") return emptyOverview;
+        if (method === "location.create") {
+          locCount += 1;
+          return {
+            id: locCount === 1 ? "loc-1" : "loc-2",
+            current_revision: {
+              id: locCount === 1 ? "lrev-1" : "lrev-2",
+              name: locCount === 1 ? "夜市东口" : "后巷",
+            },
+            is_core: locCount === 1,
+          };
+        }
+        if (method === "location.approve") {
+          return {
+            id: "loc-1",
+            current_revision: { id: "lrev-1", name: "夜市东口", status: "approved" },
+            is_core: true,
+          };
+        }
+        if (method === "spatial.add_link") {
+          return { id: "link-1", link_type: "connected" };
+        }
+        if (method === "prop.create") {
+          return {
+            id: "prop-1",
+            current_revision: { id: "prev-1", name: "发光 U 盘" },
+          };
+        }
+        if (method === "prop.approve") {
+          return {
+            id: "prop-1",
+            current_revision: { id: "prev-1", status: "approved" },
+          };
+        }
+        if (method === "location.create_pack") {
+          return {
+            id: "lpack-1",
+            current_revision: { id: "lprev-1", status: "draft" },
+          };
+        }
+        if (method === "location.anchor_prop") {
+          return { id: "anchor-1", anchor_label: "stall_floor" };
+        }
+        if (method === "location.confirm_pack") {
+          return {
+            id: "lpack-1",
+            confirmed_revision_id: "lprev-1",
+            confirmed_revision: { id: "lprev-1", status: "confirmed" },
+          };
+        }
+        if (method === "location.gate") {
+          return { location_id: "loc-1", ready_for_production: true, is_core: true };
+        }
+        if (method === "location.overview") {
+          return {
+            locations: [
+              { id: "loc-1", current_revision: { name: "夜市东口" } },
+              { id: "loc-2", current_revision: { name: "后巷" } },
+            ],
+            props: [{ id: "prop-1" }],
+            spatial_links: [{ id: "link-1" }],
+          };
+        }
+        return { status: "ok" };
+      }),
+    });
+    const user = userEvent.setup();
+    render(<App api={api} showDiagnostics />);
+    await user.click(await screen.findByRole("button", { name: "场景道具" }));
+    await user.click(await screen.findByRole("button", { name: "创建样例场景与道具" }));
+    expect(await screen.findByText(/场景世界已确认/)).toBeInTheDocument();
+    expect(screen.getByLabelText("场景列表")).toHaveTextContent("夜市东口");
+    expect(screen.getByLabelText("场景统计")).toHaveTextContent("道具 1");
+    expect(screen.getByLabelText("场景统计")).toHaveTextContent("ready");
+    expect(api.request).toHaveBeenCalledWith(
+      "location.confirm_pack",
+      { revision_id: "lprev-1" },
+      expect.any(String),
+    );
+  });
+
   it("creates sample characters relationships and voice profiles", async () => {
     const hero = {
       id: "char-1",

@@ -22,6 +22,7 @@
 - **分集剧本编辑**：场景 / 台词（稳定 line_id + 不可变修订）/ 钩子；校验后批准写入 `episode.current_script_revision_id`。
 - **角色 / 关系 / 声音档案**：稳定 Character + 修订；有向关系；VoiceProfile 可挂角色或旁白。
 - **身份包 / 定妆候选**：生成 look candidates（默认 mock，可选 Grok `image_gen`）；选择后 confirm 才过生产门禁；主角/反派必须确认。
+- **场景包 / 空间关系 / 道具**：核心场景布局+机位+昼夜；有向空间连接；关键道具锚点；核心场景包 confirm 门禁。
 
 项目 RPC：`project.create` / `open` / `close` / `current` / `list_recent` / `overview`。  
 故事 RPC：`story.import_source` / `list_sources` / `split_chapters` / `list_chunks` / `create_event` / `list_events` / `create_edge` / `list_edges` / `list_branches` / `create_branch` / `fork_branch` / `set_primary` / `archive_branch`。  
@@ -36,6 +37,9 @@
 关系 RPC：`relationship.create` / `list` / `approve`。  
 声音 RPC：`voice.create` / `list` / `approve`。  
 身份包 RPC：`identity.create` / `get` / `list` / `update` / `generate_looks` / `select_look` / `validate` / `approve` / `confirm` / `gate`。  
+场景 RPC：`location.create` / `list` / `approve` / `mark_core` / `create_pack` / `update_pack` / `validate_pack` / `approve_pack` / `confirm_pack` / `list_packs` / `gate` / `overview` / `anchor_prop`。  
+空间 RPC：`spatial.add_link` / `list`。  
+道具 RPC：`prop.create` / `list` / `approve`。  
 任务 RPC：`job.enqueue` / `get` / `list` / `claim` / `complete` / `fail` / `cancel` / `pause` / `resume` / `reclaim_expired`。  
 环境 RPC：`env.summary`、`env.resolve`（必须传 `allow_keys`）。  
 快照 RPC：`snapshot.create`、`snapshot.list`。  
