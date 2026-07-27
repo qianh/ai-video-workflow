@@ -17,11 +17,13 @@
 - **M2 起步**：故事来源导入、章节切分、可定位事件与事件边（主线分支）。
 - **Creative Pack**：注册/发布修订、组合解析、固定套件评测、项目锁定（不自动覆盖旧锁定语义）。
 - **草稿门禁**：`draft → validate → promote`，无绕过 Schema 的正式修订入口。
+- **生成流水线**：`plan → execute → review`；执行只产草稿，审阅隔离，不自动正式修订。
 
 项目 RPC：`project.create` / `open` / `close` / `current` / `list_recent` / `overview`。  
 故事 RPC：`story.import_source` / `list_sources` / `split_chapters` / `list_chunks` / `create_event` / `list_events` / `create_edge` / `list_edges` / `list_branches` / `create_branch` / `fork_branch` / `set_primary` / `archive_branch`。  
 创作包 RPC：`pack.register` / `publish_revision` / `list` / `compose` / `evaluate` / `lock` / `current_lock` / `list_compositions`。  
 草稿 RPC：`draft.create` / `update` / `validate` / `promote` / `get` / `list` / `list_schemas`；`revision.list`。  
+生成 RPC：`generation.create` / `plan` / `execute` / `review` / `accept_human` / `open_draft_gate` / `get` / `history` / `list`。  
 任务 RPC：`job.enqueue` / `get` / `list` / `claim` / `complete` / `fail` / `cancel` / `pause` / `resume` / `reclaim_expired`。  
 环境 RPC：`env.summary`、`env.resolve`（必须传 `allow_keys`）。  
 快照 RPC：`snapshot.create`、`snapshot.list`。  

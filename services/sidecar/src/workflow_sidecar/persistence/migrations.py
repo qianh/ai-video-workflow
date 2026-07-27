@@ -280,6 +280,75 @@ PROJECT_MIGRATIONS: list[Migration] = [
         CREATE INDEX idx_formal_revisions_target ON formal_revisions(target_type, target_id, revision_no);
         """,
     ),
+    (
+        6,
+        """
+        CREATE TABLE generation_runs (
+            id TEXT PRIMARY KEY,
+            target_type TEXT NOT NULL,
+            target_id TEXT,
+            branch_id TEXT,
+            schema_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            intent_json TEXT NOT NULL,
+            pack_lock_id TEXT,
+            pack_lock_hash TEXT,
+            status TEXT NOT NULL,
+            iteration INTEGER NOT NULL DEFAULT 1,
+            draft_id TEXT,
+            human_accept_reason TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            finished_at TEXT
+        );
+
+        CREATE TABLE generation_plans (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            iteration INTEGER NOT NULL,
+            plan_json TEXT NOT NULL,
+            input_fingerprint TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES generation_runs(id),
+            UNIQUE(run_id, iteration)
+        );
+
+        CREATE TABLE generation_executions (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            plan_id TEXT NOT NULL,
+            iteration INTEGER NOT NULL,
+            executor TEXT NOT NULL,
+            output_json TEXT NOT NULL,
+            draft_id TEXT,
+            schema_ok INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            error TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES generation_runs(id),
+            FOREIGN KEY(plan_id) REFERENCES generation_plans(id)
+        );
+
+        CREATE TABLE generation_reviews (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            execution_id TEXT NOT NULL,
+            iteration INTEGER NOT NULL,
+            verdict TEXT NOT NULL,
+            findings_json TEXT NOT NULL,
+            isolated INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES generation_runs(id),
+            FOREIGN KEY(execution_id) REFERENCES generation_executions(id)
+        );
+
+        CREATE INDEX idx_generation_runs_status ON generation_runs(status, updated_at DESC);
+        CREATE INDEX idx_generation_plans_run ON generation_plans(run_id, iteration);
+        CREATE INDEX idx_generation_exec_run ON generation_executions(run_id, iteration);
+        CREATE INDEX idx_generation_reviews_run ON generation_reviews(run_id, iteration);
+        """,
+    ),
 ]
 
 

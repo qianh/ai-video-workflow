@@ -36,7 +36,15 @@ type ProjectOverview = {
   snapshots: SnapshotInfo[];
   queue_depth: number;
 };
-type ShellView = "overview" | "project" | "story" | "packs" | "drafts" | "jobs" | "link";
+type ShellView =
+  | "overview"
+  | "project"
+  | "story"
+  | "packs"
+  | "drafts"
+  | "generation"
+  | "jobs"
+  | "link";
 type StorySourceInfo = {
   id: string;
   title: string;
@@ -128,6 +136,9 @@ export function App({
   const [revisions, setRevisions] = useState<
     { id: string; title: string; revision_no: number; status: string }[]
   >([]);
+  const [genRuns, setGenRuns] = useState<
+    { id: string; title: string; status: string; iteration: number }[]
+  >([]);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -192,8 +203,29 @@ export function App({
       setBranches([]);
       setDrafts([]);
       setRevisions([]);
+      setGenRuns([]);
     }
   }, [api]);
+
+  const refreshGenerationState = useCallback(async () => {
+    if (!project) {
+      setGenRuns([]);
+      return;
+    }
+    const listed = await api.request(
+      "generation.list",
+      { limit: 20 },
+      requestId("gen-list"),
+    );
+    setGenRuns(
+      ((listed.runs as Array<Record<string, unknown>> | undefined) ?? []).map((item) => ({
+        id: String(item.id ?? ""),
+        title: String(item.title ?? ""),
+        status: String(item.status ?? ""),
+        iteration: Number(item.iteration ?? 1),
+      })),
+    );
+  }, [api, project]);
 
   const refreshDraftState = useCallback(async () => {
     if (!project) {
@@ -562,6 +594,62 @@ export function App({
     }
   };
 
+  const runGenerationPipeline = async () => {
+    setBusy("generation");
+    try {
+      const created = await api.request(
+        "generation.create",
+        {
+          title: "E01 AI 大纲",
+          schema_id: "episode_outline_v1",
+          intent: { constraints: ["竖屏", "悬疑"] },
+          target_type: "episode_outline",
+          target_id: "episode-ai-1",
+        },
+        requestId("gen-create"),
+      );
+      const runId = String(created.id);
+      await api.request("generation.plan", { run_id: runId }, requestId("gen-plan"));
+      await api.request(
+        "generation.execute",
+        {
+          run_id: runId,
+          output: {
+            episode_no: 1,
+            title: "夜市开端",
+            summary: "雨夜发现发光 U 盘",
+            hooks: ["发光 U 盘"],
+          },
+        },
+        requestId("gen-exec"),
+      );
+      const review = await api.request(
+        "generation.review",
+        {
+          run_id: runId,
+          verdict: "pass",
+          findings: [{ category: "structure", severity: "info", message: "ok" }],
+        },
+        requestId("gen-review"),
+      );
+      const gate = await api.request(
+        "generation.open_draft_gate",
+        { run_id: runId },
+        requestId("gen-gate"),
+      );
+      setNotice({
+        tone: "success",
+        text: `生成流水线完成 · review=${String((review as { verdict?: string }).verdict ?? "pass")} · can_promote=${String((gate as { can_promote?: boolean }).can_promote)} · 未自动正式修订`,
+      });
+      await refreshGenerationState();
+      setView("generation");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const createValidatePromoteDraft = async () => {
     setBusy("draft-flow");
     try {
@@ -729,6 +817,7 @@ export function App({
     { id: "story", label: "故事" },
     { id: "packs", label: "创作包" },
     { id: "drafts", label: "草稿修订" },
+    { id: "generation", label: "生成流水线" },
     { id: "jobs", label: "任务中心" },
     { id: "link", label: "链路诊断" },
   ];
@@ -1216,6 +1305,64 @@ export function App({
                   )}
                 </div>
               </div>
+            </>
+          )}
+        </section>
+      )}
+
+      {view === "generation" && (
+        <section className="console-panel" aria-label="生成流水线">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">PLAN · EXECUTE · REVIEW</p>
+              <h3>AI 生成流水线</h3>
+            </div>
+            <span className="panel-number">M2.06</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="跑通生成流水线"
+                  className="action primary"
+                  onClick={() => void runGenerationPipeline()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">G1</span>
+                  <span>
+                    <strong>跑通生成流水线</strong>
+                    <small>plan → execute → review → gate</small>
+                  </span>
+                </button>
+                <button
+                  aria-label="刷新生成运行"
+                  className="action"
+                  onClick={() => void refreshGenerationState()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">G2</span>
+                  <span>
+                    <strong>刷新运行列表</strong>
+                    <small>generation.list</small>
+                  </span>
+                </button>
+              </div>
+              {genRuns.length === 0 ? (
+                <p className="empty-hint">暂无生成运行</p>
+              ) : (
+                <ul className="job-list" aria-label="生成运行列表">
+                  {genRuns.map((item) => (
+                    <li key={item.id}>
+                      <code>{item.status}</code> {item.title} · iter {item.iteration}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="empty-hint">
+                审阅通过只打开草稿门禁；正式修订仍需 draft.promote。
+              </p>
             </>
           )}
         </section>

@@ -23,6 +23,7 @@ from .persistence.overview import build_project_overview
 from .persistence.paths import file_sha256, resolve_project_path, to_project_relative
 from .persistence.creative_packs import CreativePackService
 from .persistence.drafts import DraftService
+from .persistence.generation import GenerationService
 from .persistence.story import StoryService
 from .protocol import Request, error_response, event, success_response
 
@@ -188,6 +189,10 @@ class SidecarRuntime:
             await self._execute_draft(request)
             return
 
+        if request.method.startswith("generation."):
+            await self._execute_generation(request)
+            return
+
         if request.method.startswith("job."):
             await self._execute_job(request)
             return
@@ -246,6 +251,134 @@ class SidecarRuntime:
     def _drafts(self) -> DraftService:
         self._workspace.require_project_db()
         return DraftService(self._workspace.require_project_db())
+
+    def _generation(self) -> GenerationService:
+        self._workspace.require_project_db()
+        return GenerationService(self._workspace.require_project_db())
+
+    async def _execute_generation(self, request: Request) -> None:
+        gen = self._generation()
+        method = request.method
+        params = request.params
+
+        if method == "generation.create":
+            title = params.get("title")
+            schema_id = params.get("schema_id")
+            intent = params.get("intent") or {}
+            target_type = params.get("target_type", "episode_outline")
+            target_id = params.get("target_id")
+            branch_id = params.get("branch_id")
+            pack_lock_id = params.get("pack_lock_id")
+            pack_lock_hash = params.get("pack_lock_hash")
+            if not isinstance(title, str) or not isinstance(schema_id, str):
+                raise ValueError("title and schema_id must be strings")
+            if not isinstance(intent, dict):
+                raise ValueError("intent must be an object")
+            if branch_id is None:
+                branch_id = self._story().primary_branch_id()
+            # Attach current pack lock if present.
+            if pack_lock_id is None:
+                lock = self._packs().current_lock()
+                if lock is not None:
+                    pack_lock_id = lock["id"]
+                    pack_lock_hash = lock["composition_content_hash"]
+            result = gen.create_run(
+                title=title,
+                schema_id=schema_id,
+                intent=intent,
+                target_type=str(target_type),
+                target_id=target_id if isinstance(target_id, str) else None,
+                branch_id=branch_id if isinstance(branch_id, str) else None,
+                pack_lock_id=pack_lock_id if isinstance(pack_lock_id, str) else None,
+                pack_lock_hash=pack_lock_hash if isinstance(pack_lock_hash, str) else None,
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "generation.plan":
+            run_id = params.get("run_id")
+            plan = params.get("plan")
+            if not isinstance(run_id, str):
+                raise ValueError("run_id must be a string")
+            if plan is not None and not isinstance(plan, dict):
+                raise ValueError("plan must be an object")
+            result = gen.plan(run_id, plan=plan)
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "generation.execute":
+            run_id = params.get("run_id")
+            output = params.get("output")
+            executor = params.get("executor", "stub.structured")
+            if not isinstance(run_id, str):
+                raise ValueError("run_id must be a string")
+            if not isinstance(output, dict):
+                raise ValueError("output must be an object")
+            if not isinstance(executor, str):
+                raise ValueError("executor must be a string")
+            result = gen.execute(run_id, output=output, executor=executor)
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "generation.review":
+            run_id = params.get("run_id")
+            verdict = params.get("verdict")
+            findings = params.get("findings") or []
+            if not isinstance(run_id, str) or not isinstance(verdict, str):
+                raise ValueError("run_id and verdict must be strings")
+            if not isinstance(findings, list):
+                raise ValueError("findings must be an array")
+            result = gen.review(run_id, verdict=verdict, findings=findings)
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "generation.accept_human":
+            run_id = params.get("run_id")
+            reason = params.get("reason")
+            if not isinstance(run_id, str) or not isinstance(reason, str):
+                raise ValueError("run_id and reason must be strings")
+            result = gen.accept_human_review(run_id, reason=reason)
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "generation.open_draft_gate":
+            run_id = params.get("run_id")
+            if not isinstance(run_id, str):
+                raise ValueError("run_id must be a string")
+            result = gen.open_draft_gate(run_id)
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "generation.get":
+            run_id = params.get("run_id")
+            if not isinstance(run_id, str):
+                raise ValueError("run_id must be a string")
+            self._emit(success_response(request.id, gen.get_run(run_id)))
+            return
+
+        if method == "generation.history":
+            run_id = params.get("run_id")
+            if not isinstance(run_id, str):
+                raise ValueError("run_id must be a string")
+            self._emit(success_response(request.id, gen.get_history(run_id)))
+            return
+
+        if method == "generation.list":
+            limit = params.get("limit", 50)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            self._emit(
+                success_response(
+                    request.id, {"runs": gen.list_runs(limit=limit)}
+                )
+            )
+            return
+
+        self._emit(
+            error_response(
+                request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
+            )
+        )
 
     async def _execute_draft(self, request: Request) -> None:
         drafts = self._drafts()
