@@ -506,6 +506,81 @@ describe("M1 shell", () => {
     );
   });
 
+  it("creates and approves an episode script with scenes dialogue and hooks", async () => {
+    const api = createApi({
+      request: vi.fn().mockImplementation(async (method: string) => {
+        if (method === "project.current") {
+          return {
+            project: {
+              id: "p1",
+              name: "试播项目",
+              root_path: "/tmp/demo",
+              schema_version: 8,
+            },
+          };
+        }
+        if (method === "project.list_recent") return { projects: [] };
+        if (method === "job.list") return { jobs: [] };
+        if (method === "project.overview") return emptyOverview;
+        if (method === "season.ensure_episodes") {
+          return {
+            episodes: [{ id: "ep-1", episode_no: 1, title: "第1集", status: "planned" }],
+          };
+        }
+        if (method === "script.create") {
+          return {
+            id: "script-1",
+            status: "draft",
+            title: "夜市开端",
+            contains_media_prompts: false,
+          };
+        }
+        if (method === "script.add_scene") {
+          return { id: "scene-1", scene_no: 1, purpose: "发现道具" };
+        }
+        if (method === "script.add_dialogue") {
+          return { id: "line-rev-1", line_id: "line-1", revision_no: 1 };
+        }
+        if (method === "script.add_hook") {
+          return { id: "hook-1", hook_type: "mid" };
+        }
+        if (method === "script.validate") {
+          return { id: "script-1", status: "validated", valid: true, validation_errors: [] };
+        }
+        if (method === "script.approve") {
+          return {
+            id: "script-1",
+            status: "approved",
+            episode: { id: "ep-1", status: "script_review", current_script_revision_id: "script-1" },
+          };
+        }
+        if (method === "script.tree") {
+          return {
+            script: { id: "script-1", title: "夜市开端", status: "approved" },
+            scenes: [{ id: "scene-1" }],
+            dialogue: [{ id: "line-rev-1" }, { id: "line-rev-2" }],
+            hooks: [{ id: "hook-1" }],
+            episode: { id: "ep-1", status: "script_review" },
+            contains_media_prompts: false,
+          };
+        }
+        return { status: "ok" };
+      }),
+    });
+    const user = userEvent.setup();
+    render(<App api={api} showDiagnostics />);
+    await user.click(await screen.findByRole("button", { name: "分集剧本" }));
+    await user.click(await screen.findByRole("button", { name: "创建并批准样例剧本" }));
+    expect(await screen.findByText(/分集剧本已批准/)).toBeInTheDocument();
+    expect(screen.getByLabelText("剧本摘要")).toHaveTextContent("夜市开端");
+    expect(screen.getByLabelText("剧本结构统计")).toHaveTextContent("场景 1");
+    expect(api.request).toHaveBeenCalledWith(
+      "script.approve",
+      { script_id: "script-1" },
+      expect.any(String),
+    );
+  });
+
   it("builds and approves a story package with season timeline", async () => {
     let seeded = false;
     const emptySeason = {

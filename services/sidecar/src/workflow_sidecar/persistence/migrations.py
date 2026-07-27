@@ -420,6 +420,96 @@ PROJECT_MIGRATIONS: list[Migration] = [
         CREATE INDEX idx_story_package_revisions ON story_package_revisions(package_id, revision_no);
         """,
     ),
+    (
+        8,
+        """
+        CREATE TABLE episode_script_revisions (
+            id TEXT PRIMARY KEY,
+            episode_id TEXT NOT NULL,
+            branch_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            title TEXT,
+            goal TEXT NOT NULL DEFAULT '',
+            main_conflict TEXT NOT NULL DEFAULT '',
+            twist TEXT,
+            opening_hook TEXT NOT NULL DEFAULT '',
+            ending_hook TEXT NOT NULL DEFAULT '',
+            estimated_duration_ms INTEGER,
+            content_hash TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(episode_id) REFERENCES episodes(id),
+            UNIQUE(episode_id, revision_no)
+        );
+
+        CREATE INDEX idx_episode_script_revisions
+            ON episode_script_revisions(episode_id, revision_no);
+
+        CREATE TABLE script_scene_revisions (
+            id TEXT PRIMARY KEY,
+            script_revision_id TEXT NOT NULL,
+            scene_no INTEGER NOT NULL,
+            location_ref TEXT,
+            story_time_start TEXT,
+            time_of_day TEXT NOT NULL DEFAULT 'night',
+            purpose TEXT NOT NULL,
+            action_text TEXT NOT NULL,
+            estimated_duration_ms INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(script_revision_id) REFERENCES episode_script_revisions(id),
+            UNIQUE(script_revision_id, scene_no)
+        );
+
+        CREATE INDEX idx_script_scenes
+            ON script_scene_revisions(script_revision_id, scene_no);
+
+        CREATE TABLE dialogue_lines (
+            id TEXT PRIMARY KEY,
+            episode_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(episode_id) REFERENCES episodes(id)
+        );
+
+        CREATE TABLE dialogue_line_revisions (
+            id TEXT PRIMARY KEY,
+            line_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            scene_revision_id TEXT NOT NULL,
+            speaker_name TEXT,
+            text TEXT NOT NULL,
+            line_type TEXT NOT NULL,
+            emotion TEXT,
+            action_intent TEXT,
+            pronunciation TEXT,
+            sort_order INTEGER NOT NULL,
+            estimated_duration_ms INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(line_id) REFERENCES dialogue_lines(id),
+            FOREIGN KEY(scene_revision_id) REFERENCES script_scene_revisions(id),
+            UNIQUE(line_id, revision_no)
+        );
+
+        CREATE INDEX idx_dialogue_line_revisions_scene
+            ON dialogue_line_revisions(scene_revision_id, sort_order);
+
+        CREATE TABLE script_hooks (
+            id TEXT PRIMARY KEY,
+            script_revision_id TEXT NOT NULL,
+            hook_type TEXT NOT NULL,
+            position_scene_no INTEGER,
+            text TEXT NOT NULL,
+            sort_order INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(script_revision_id) REFERENCES episode_script_revisions(id)
+        );
+
+        CREATE INDEX idx_script_hooks
+            ON script_hooks(script_revision_id, sort_order);
+        """,
+    ),
 ]
 
 

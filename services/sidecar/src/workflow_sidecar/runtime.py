@@ -23,6 +23,7 @@ from .persistence.overview import build_project_overview
 from .persistence.paths import file_sha256, resolve_project_path, to_project_relative
 from .persistence.creative_packs import CreativePackService
 from .persistence.drafts import DraftService
+from .persistence.episode_scripts import EpisodeScriptService
 from .persistence.generation import GenerationService
 from .persistence.story import StoryService
 from .persistence.story_package import StoryPackageService
@@ -202,6 +203,12 @@ class SidecarRuntime:
             await self._execute_story_package(request)
             return
 
+        if request.method.startswith("script.") or request.method.startswith(
+            "episode."
+        ):
+            await self._execute_episode_script(request)
+            return
+
         if request.method.startswith("job."):
             await self._execute_job(request)
             return
@@ -268,6 +275,10 @@ class SidecarRuntime:
     def _story_packages(self) -> StoryPackageService:
         self._workspace.require_project_db()
         return StoryPackageService(self._workspace.require_project_db())
+
+    def _scripts(self) -> EpisodeScriptService:
+        self._workspace.require_project_db()
+        return EpisodeScriptService(self._workspace.require_project_db())
 
     def _resolve_branch_id(self, params: dict[str, Any]) -> str:
         branch_id = params.get("branch_id")
@@ -448,6 +459,238 @@ class SidecarRuntime:
                 raise ValueError("limit must be an integer")
             result = svc.list_package_revisions(limit=limit)
             self._emit(success_response(request.id, {"revisions": result}))
+            return
+
+        self._emit(
+            error_response(
+                request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
+            )
+        )
+
+    async def _execute_episode_script(self, request: Request) -> None:
+        svc = self._scripts()
+        method = request.method
+        params = request.params
+
+        if method == "episode.get":
+            episode_id = params.get("episode_id")
+            if not isinstance(episode_id, str):
+                raise ValueError("episode_id must be a string")
+            self._emit(success_response(request.id, svc.get_episode(episode_id)))
+            return
+
+        if method == "episode.update_title":
+            episode_id = params.get("episode_id")
+            title = params.get("title")
+            if not isinstance(episode_id, str) or not isinstance(title, str):
+                raise ValueError("episode_id and title must be strings")
+            self._emit(
+                success_response(
+                    request.id, svc.update_episode_title(episode_id, title)
+                )
+            )
+            return
+
+        if method == "script.create":
+            episode_id = params.get("episode_id")
+            if not isinstance(episode_id, str):
+                raise ValueError("episode_id must be a string")
+            result = svc.create_script(
+                episode_id=episode_id,
+                title=params.get("title"),
+                goal=params.get("goal", ""),
+                main_conflict=params.get("main_conflict", ""),
+                twist=params.get("twist"),
+                opening_hook=params.get("opening_hook", ""),
+                ending_hook=params.get("ending_hook", ""),
+                estimated_duration_ms=params.get("estimated_duration_ms"),
+                notes=params.get("notes"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "script.update":
+            script_id = params.get("script_id")
+            if not isinstance(script_id, str):
+                raise ValueError("script_id must be a string")
+            result = svc.update_script(
+                script_id,
+                title=params.get("title"),
+                goal=params.get("goal"),
+                main_conflict=params.get("main_conflict"),
+                twist=params.get("twist"),
+                opening_hook=params.get("opening_hook"),
+                ending_hook=params.get("ending_hook"),
+                estimated_duration_ms=params.get("estimated_duration_ms"),
+                notes=params.get("notes"),
+                clear_twist=bool(params.get("clear_twist", False)),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "script.get":
+            script_id = params.get("script_id")
+            if not isinstance(script_id, str):
+                raise ValueError("script_id must be a string")
+            self._emit(success_response(request.id, svc.get_script(script_id)))
+            return
+
+        if method == "script.tree":
+            script_id = params.get("script_id")
+            if not isinstance(script_id, str):
+                raise ValueError("script_id must be a string")
+            self._emit(success_response(request.id, svc.get_script_tree(script_id)))
+            return
+
+        if method == "script.list":
+            episode_id = params.get("episode_id")
+            limit = params.get("limit", 50)
+            if episode_id is not None and not isinstance(episode_id, str):
+                raise ValueError("episode_id must be a string")
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            result = svc.list_scripts(episode_id=episode_id, limit=limit)
+            self._emit(success_response(request.id, {"scripts": result}))
+            return
+
+        if method == "script.add_scene":
+            script_id = params.get("script_id")
+            purpose = params.get("purpose")
+            action_text = params.get("action_text")
+            if not isinstance(script_id, str):
+                raise ValueError("script_id must be a string")
+            if not isinstance(purpose, str) or not isinstance(action_text, str):
+                raise ValueError("purpose and action_text must be strings")
+            result = svc.add_scene(
+                script_revision_id=script_id,
+                scene_no=params.get("scene_no"),
+                purpose=purpose,
+                action_text=action_text,
+                time_of_day=params.get("time_of_day", "night"),
+                location_ref=params.get("location_ref"),
+                story_time_start=params.get("story_time_start"),
+                estimated_duration_ms=params.get("estimated_duration_ms"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "script.update_scene":
+            scene_id = params.get("scene_id")
+            if not isinstance(scene_id, str):
+                raise ValueError("scene_id must be a string")
+            result = svc.update_scene(
+                scene_id,
+                purpose=params.get("purpose"),
+                action_text=params.get("action_text"),
+                time_of_day=params.get("time_of_day"),
+                location_ref=params.get("location_ref"),
+                story_time_start=params.get("story_time_start"),
+                estimated_duration_ms=params.get("estimated_duration_ms"),
+                clear_location=bool(params.get("clear_location", False)),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "script.list_scenes":
+            script_id = params.get("script_id")
+            if not isinstance(script_id, str):
+                raise ValueError("script_id must be a string")
+            self._emit(
+                success_response(
+                    request.id, {"scenes": svc.list_scenes(script_id)}
+                )
+            )
+            return
+
+        if method == "script.add_dialogue":
+            scene_id = params.get("scene_id")
+            text = params.get("text")
+            if not isinstance(scene_id, str) or not isinstance(text, str):
+                raise ValueError("scene_id and text must be strings")
+            result = svc.add_dialogue(
+                scene_revision_id=scene_id,
+                text=text,
+                line_type=params.get("line_type", "dialogue"),
+                speaker_name=params.get("speaker_name"),
+                emotion=params.get("emotion"),
+                action_intent=params.get("action_intent"),
+                pronunciation=params.get("pronunciation"),
+                sort_order=params.get("sort_order"),
+                estimated_duration_ms=params.get("estimated_duration_ms"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "script.revise_dialogue":
+            line_id = params.get("line_id")
+            if not isinstance(line_id, str):
+                raise ValueError("line_id must be a string")
+            result = svc.revise_dialogue(
+                line_id,
+                text=params.get("text"),
+                speaker_name=params.get("speaker_name"),
+                line_type=params.get("line_type"),
+                emotion=params.get("emotion"),
+                action_intent=params.get("action_intent"),
+                pronunciation=params.get("pronunciation"),
+                sort_order=params.get("sort_order"),
+                estimated_duration_ms=params.get("estimated_duration_ms"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "script.list_dialogue":
+            scene_id = params.get("scene_id")
+            script_id = params.get("script_id")
+            if scene_id is not None and not isinstance(scene_id, str):
+                raise ValueError("scene_id must be a string")
+            if script_id is not None and not isinstance(script_id, str):
+                raise ValueError("script_id must be a string")
+            result = svc.list_dialogue(
+                scene_revision_id=scene_id, script_revision_id=script_id
+            )
+            self._emit(success_response(request.id, {"lines": result}))
+            return
+
+        if method == "script.add_hook":
+            script_id = params.get("script_id")
+            hook_type = params.get("hook_type")
+            text = params.get("text")
+            if not isinstance(script_id, str):
+                raise ValueError("script_id must be a string")
+            if not isinstance(hook_type, str) or not isinstance(text, str):
+                raise ValueError("hook_type and text must be strings")
+            result = svc.add_hook(
+                script_revision_id=script_id,
+                hook_type=hook_type,
+                text=text,
+                position_scene_no=params.get("position_scene_no"),
+                sort_order=params.get("sort_order"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "script.list_hooks":
+            script_id = params.get("script_id")
+            if not isinstance(script_id, str):
+                raise ValueError("script_id must be a string")
+            self._emit(
+                success_response(request.id, {"hooks": svc.list_hooks(script_id)})
+            )
+            return
+
+        if method == "script.validate":
+            script_id = params.get("script_id")
+            if not isinstance(script_id, str):
+                raise ValueError("script_id must be a string")
+            self._emit(success_response(request.id, svc.validate_script(script_id)))
+            return
+
+        if method == "script.approve":
+            script_id = params.get("script_id")
+            if not isinstance(script_id, str):
+                raise ValueError("script_id must be a string")
+            self._emit(success_response(request.id, svc.approve_script(script_id)))
             return
 
         self._emit(

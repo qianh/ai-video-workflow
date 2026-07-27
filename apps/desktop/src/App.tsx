@@ -42,6 +42,7 @@ type ShellView =
   | "story"
   | "packs"
   | "package"
+  | "scripts"
   | "drafts"
   | "generation"
   | "jobs"
@@ -157,6 +158,15 @@ export function App({
       contains_media_prompts: boolean;
     }[]
   >([]);
+  const [scriptSummary, setScriptSummary] = useState<{
+    scriptId: string;
+    status: string;
+    title: string;
+    sceneCount: number;
+    lineCount: number;
+    hookCount: number;
+    episodeStatus: string;
+  } | null>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -226,6 +236,7 @@ export function App({
       setTimelineBeats([]);
       setEpisodes([]);
       setPackageRevisions([]);
+      setScriptSummary(null);
     }
   }, [api]);
 
@@ -670,6 +681,119 @@ export function App({
     }
   };
 
+  const buildEpisodeScript = async () => {
+    setBusy("script-setup");
+    try {
+      const ensured = await api.request(
+        "season.ensure_episodes",
+        { count: 1 },
+        requestId("script-episodes"),
+      );
+      const episodeId = String(
+        ((ensured.episodes as Array<{ id?: string }> | undefined) ?? [])[0]?.id ?? "",
+      );
+      if (!episodeId) throw new Error("no episode available");
+      const created = await api.request(
+        "script.create",
+        {
+          episode_id: episodeId,
+          title: "夜市开端",
+          goal: "建立悬念并引出失踪线索",
+          main_conflict: "发光 U 盘与失踪消息",
+          opening_hook: "雨夜捡到发光 U 盘",
+          ending_hook: "未知号码打来电话",
+          twist: "U 盘像是她自己寄回的",
+          estimated_duration_ms: 90000,
+        },
+        requestId("script-create"),
+      );
+      const scriptId = String(created.id);
+      const scene = await api.request(
+        "script.add_scene",
+        {
+          script_id: scriptId,
+          purpose: "发现道具",
+          action_text: "女孩在摊位旁捡起发光 U 盘",
+          time_of_day: "night",
+          location_ref: "夜市东口",
+        },
+        requestId("script-scene"),
+      );
+      await api.request(
+        "script.add_dialogue",
+        {
+          scene_id: String(scene.id),
+          speaker_name: "阿宁",
+          text: "这光……不像普通 U 盘。",
+          line_type: "dialogue",
+          emotion: "警惕",
+        },
+        requestId("script-line"),
+      );
+      await api.request(
+        "script.add_dialogue",
+        {
+          scene_id: String(scene.id),
+          text: "雨声盖过她的呼吸。",
+          line_type: "narration",
+        },
+        requestId("script-narration"),
+      );
+      await api.request(
+        "script.add_hook",
+        {
+          script_id: scriptId,
+          hook_type: "mid",
+          text: "加密视频最后一帧是她自己的脸",
+          position_scene_no: 1,
+        },
+        requestId("script-hook"),
+      );
+      const validated = await api.request(
+        "script.validate",
+        { script_id: scriptId },
+        requestId("script-validate"),
+      );
+      if (!validated.valid) {
+        throw new Error(
+          `script validation failed: ${JSON.stringify(validated.validation_errors)}`,
+        );
+      }
+      const approved = await api.request(
+        "script.approve",
+        { script_id: scriptId },
+        requestId("script-approve"),
+      );
+      const tree = await api.request(
+        "script.tree",
+        { script_id: scriptId },
+        requestId("script-tree"),
+      );
+      const scenes = (tree.scenes as unknown[] | undefined) ?? [];
+      const lines = (tree.dialogue as unknown[] | undefined) ?? [];
+      const hooks = (tree.hooks as unknown[] | undefined) ?? [];
+      const episode = tree.episode as { status?: string } | undefined;
+      setScriptSummary({
+        scriptId,
+        status: String(approved.status ?? "approved"),
+        title: String((tree.script as { title?: string } | undefined)?.title ?? "夜市开端"),
+        sceneCount: scenes.length,
+        lineCount: lines.length,
+        hookCount: hooks.length,
+        episodeStatus: String(episode?.status ?? ""),
+      });
+      setNotice({
+        tone: "success",
+        text: `分集剧本已批准 · scenes=${scenes.length} · lines=${lines.length} · hooks=${hooks.length} · episode=${String(episode?.status ?? "")}`,
+      });
+      setView("scripts");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const buildSeasonPackage = async () => {
     setBusy("package-setup");
     try {
@@ -994,6 +1118,7 @@ export function App({
     { id: "story", label: "故事" },
     { id: "packs", label: "创作包" },
     { id: "package", label: "故事包" },
+    { id: "scripts", label: "分集剧本" },
     { id: "drafts", label: "草稿修订" },
     { id: "generation", label: "生成流水线" },
     { id: "jobs", label: "任务中心" },
@@ -1406,6 +1531,67 @@ export function App({
                   ))}
                 </ul>
               )}
+            </>
+          )}
+        </section>
+      )}
+
+      {view === "scripts" && (
+        <section className="console-panel" aria-label="分集剧本">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">EPISODE SCRIPT</p>
+              <h3>分集 · 场景 · 台词 · 钩子</h3>
+            </div>
+            <span className="panel-number">M2.08</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="创建并批准样例剧本"
+                  className="action primary"
+                  onClick={() => void buildEpisodeScript()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">E1</span>
+                  <span>
+                    <strong>创建并批准样例剧本</strong>
+                    <small>scene + dialogue + hook → approve</small>
+                  </span>
+                </button>
+              </div>
+              {!scriptSummary ? (
+                <p className="empty-hint">尚未创建分集剧本。</p>
+              ) : (
+                <div className="overview-columns">
+                  <div>
+                    <h4>剧本</h4>
+                    <ul className="job-list" aria-label="剧本摘要">
+                      <li>
+                        <code>{scriptSummary.status}</code> {scriptSummary.title}
+                      </li>
+                      <li>
+                        episode · <code>{scriptSummary.episodeStatus}</code>
+                      </li>
+                      <li>id · {scriptSummary.scriptId.slice(0, 8)}…</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h4>结构</h4>
+                    <ul className="job-list" aria-label="剧本结构统计">
+                      <li>场景 {scriptSummary.sceneCount}</li>
+                      <li>台词/旁白 {scriptSummary.lineCount}</li>
+                      <li>钩子 {scriptSummary.hookCount}</li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+              <p className="empty-hint">
+                台词使用稳定 line_id 与不可变修订；剧本不内嵌媒体提示词。
+              </p>
             </>
           )}
         </section>
