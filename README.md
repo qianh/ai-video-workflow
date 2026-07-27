@@ -1,6 +1,6 @@
 # AI Video Workflow
 
-面向 AI 连续漫剧生产的 macOS 桌面工作站。当前代码完成 M0-01～M0-03 的最小纵向链路：React → Tauri/Rust → Python Sidecar。
+面向 AI 连续漫剧生产的 macOS 桌面工作站。M0 纵向链路 + M1 底座 + **M2 创作闭环（至确认门）** 已落地：React → Tauri/Rust → Python Sidecar。
 
 ## 当前能力
 
@@ -25,6 +25,7 @@
 - **场景包 / 空间关系 / 道具**：核心场景布局+机位+昼夜；有向空间连接；关键道具锚点；核心场景包 confirm 门禁。
 - **时间化状态账本**：区间状态（outfit/injury/owner…）；同优先级重叠阻断；快照在无 blocker 时冻结有效状态。
 - **视觉圣经 / 导演预设**：project → episode → shot 三级继承；`locked_fields` 硬约束不可被下级覆盖；主版本变更产出影响报告。
+- **M2 确认门**：`story_package` 与 `identity_and_locations`；确认后目标修订集合哈希变化则自动失效；`trial.bootstrap` 一键搭试验项目并确认。
 
 项目 RPC：`project.create` / `open` / `close` / `current` / `list_recent` / `overview`。  
 故事 RPC：`story.import_source` / `list_sources` / `split_chapters` / `list_chunks` / `create_event` / `list_events` / `create_edge` / `list_edges` / `list_branches` / `create_branch` / `fork_branch` / `set_primary` / `archive_branch`。  
@@ -45,6 +46,7 @@
 连续性 RPC：`continuity.add` / `end` / `supersede` / `get` / `list` / `effective` / `check` / `snapshot` / `list_snapshots` / `overview`。  
 视觉圣经 RPC：`visual.create` / `add_revision` / `approve` / `resolve` / `list`。  
 导演预设 RPC：`director.create` / `add_revision` / `approve` / `resolve` / `list` / `overview`。  
+确认门 RPC：`gate.evaluate` / `confirm` / `get` / `list` / `status`；`trial.bootstrap`。  
 任务 RPC：`job.enqueue` / `get` / `list` / `claim` / `complete` / `fail` / `cancel` / `pause` / `resume` / `reclaim_expired`。  
 环境 RPC：`env.summary`、`env.resolve`（必须传 `allow_keys`）。  
 快照 RPC：`snapshot.create`、`snapshot.list`。  

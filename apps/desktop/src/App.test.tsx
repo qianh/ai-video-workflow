@@ -506,6 +506,54 @@ describe("M1 shell", () => {
     );
   });
 
+  it("bootstraps trial project and shows confirmed M2 gates", async () => {
+    const api = createApi({
+      request: vi.fn().mockImplementation(async (method: string) => {
+        if (method === "project.current") {
+          return {
+            project: {
+              id: "p1",
+              name: "试播项目",
+              root_path: "/tmp/demo",
+              schema_version: 14,
+            },
+          };
+        }
+        if (method === "project.list_recent") return { projects: [] };
+        if (method === "job.list") return { jobs: [] };
+        if (method === "project.overview") return emptyOverview;
+        if (method === "trial.bootstrap") {
+          return {
+            ready_for_batch_production: true,
+            bootstrap: "trial_m2",
+          };
+        }
+        if (method === "gate.status") {
+          return {
+            ready_for_batch_production: true,
+            gates: {
+              story_package: { status: "confirmed", valid: true },
+              identity_and_locations: { status: "confirmed", valid: true },
+            },
+          };
+        }
+        return { status: "ok" };
+      }),
+    });
+    const user = userEvent.setup();
+    render(<App api={api} showDiagnostics />);
+    await user.click(await screen.findByRole("button", { name: "确认门" }));
+    await user.click(await screen.findByRole("button", { name: "一键试验项目并确认" }));
+    expect(await screen.findByText(/试验项目已确认/)).toBeInTheDocument();
+    expect(screen.getByLabelText("确认门列表")).toHaveTextContent("story_package");
+    expect(screen.getByLabelText("生产就绪")).toHaveTextContent("ready");
+    expect(api.request).toHaveBeenCalledWith(
+      "trial.bootstrap",
+      {},
+      expect.any(String),
+    );
+  });
+
   it("builds visual bible and director preset three-level resolve", async () => {
     const api = createApi({
       request: vi.fn().mockImplementation(async (method: string) => {

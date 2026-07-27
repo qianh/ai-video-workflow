@@ -960,6 +960,32 @@ PROJECT_MIGRATIONS: list[Migration] = [
         );
         """,
     ),
+    (
+        14,
+        """
+        CREATE TABLE approval_gates (
+            id TEXT PRIMARY KEY,
+            branch_id TEXT NOT NULL,
+            gate_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            target_set_json TEXT NOT NULL,
+            target_hash TEXT NOT NULL,
+            confirmed_hash TEXT,
+            confirmation_note TEXT,
+            confirmed_at TEXT,
+            invalidated_at TEXT,
+            invalidate_reason TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX idx_approval_gates_branch_type
+            ON approval_gates(branch_id, gate_type, status);
+
+        CREATE INDEX idx_approval_gates_status
+            ON approval_gates(status, updated_at DESC);
+        """,
+    ),
 ]
 
 

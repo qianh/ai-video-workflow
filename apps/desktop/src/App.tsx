@@ -47,6 +47,7 @@ type ShellView =
   | "world"
   | "continuity"
   | "director"
+  | "gates"
   | "drafts"
   | "generation"
   | "jobs"
@@ -201,6 +202,13 @@ export function App({
     motionIntensity: string;
     layers: string[];
   } | null>(null);
+  const [gateSummary, setGateSummary] = useState<{
+    ready: boolean;
+    storyStatus: string;
+    looksStatus: string;
+    storyValid: boolean;
+    looksValid: boolean;
+  } | null>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -275,6 +283,7 @@ export function App({
       setWorldSummary(null);
       setContinuitySummary(null);
       setDirectorSummary(null);
+      setGateSummary(null);
     }
   }, [api]);
 
@@ -712,6 +721,75 @@ export function App({
       });
       await refreshPackState();
       setView("packs");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runTrialBootstrap = async () => {
+    setBusy("trial-bootstrap");
+    try {
+      const boot = await api.request(
+        "trial.bootstrap",
+        {},
+        requestId("trial-boot"),
+      );
+      const status = await api.request(
+        "gate.status",
+        {},
+        requestId("gate-status"),
+      );
+      const story = (status.gates as { story_package?: Record<string, unknown> } | undefined)
+        ?.story_package;
+      const looks = (
+        status.gates as { identity_and_locations?: Record<string, unknown> } | undefined
+      )?.identity_and_locations;
+      setGateSummary({
+        ready: Boolean(status.ready_for_batch_production ?? boot.ready_for_batch_production),
+        storyStatus: String(story?.status ?? ""),
+        looksStatus: String(looks?.status ?? ""),
+        storyValid: Boolean(story?.valid),
+        looksValid: Boolean(looks?.valid),
+      });
+      setNotice({
+        tone: "success",
+        text: `试验项目已确认 · ready=${String(status.ready_for_batch_production)} · story=${String(story?.status)} · looks=${String(looks?.status)}`,
+      });
+      setView("gates");
+    } catch (error) {
+      setNotice({ tone: "warning", text: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const refreshGateStatus = async () => {
+    setBusy("gate-status");
+    try {
+      const status = await api.request(
+        "gate.status",
+        {},
+        requestId("gate-status-refresh"),
+      );
+      const story = (status.gates as { story_package?: Record<string, unknown> } | undefined)
+        ?.story_package;
+      const looks = (
+        status.gates as { identity_and_locations?: Record<string, unknown> } | undefined
+      )?.identity_and_locations;
+      setGateSummary({
+        ready: Boolean(status.ready_for_batch_production),
+        storyStatus: String(story?.status ?? ""),
+        looksStatus: String(looks?.status ?? ""),
+        storyValid: Boolean(story?.valid),
+        looksValid: Boolean(looks?.valid),
+      });
+      setNotice({
+        tone: status.ready_for_batch_production ? "success" : "warning",
+        text: `确认门状态 · ready=${String(status.ready_for_batch_production)} · story=${String(story?.status)}/${String(story?.valid)} · looks=${String(looks?.status)}/${String(looks?.valid)}`,
+      });
+      setView("gates");
     } catch (error) {
       setNotice({ tone: "warning", text: errorMessage(error) });
     } finally {
@@ -1706,6 +1784,7 @@ export function App({
     { id: "world", label: "场景道具" },
     { id: "continuity", label: "状态账本" },
     { id: "director", label: "导演栈" },
+    { id: "gates", label: "确认门" },
     { id: "drafts", label: "草稿修订" },
     { id: "generation", label: "生成流水线" },
     { id: "jobs", label: "任务中心" },
@@ -2118,6 +2197,81 @@ export function App({
                   ))}
                 </ul>
               )}
+            </>
+          )}
+        </section>
+      )}
+
+      {view === "gates" && (
+        <section className="console-panel" aria-label="确认门">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">APPROVAL GATES · M2</p>
+              <h3>故事包与定妆确认门</h3>
+            </div>
+            <span className="panel-number">M2.14–15</span>
+          </div>
+          {!project ? (
+            <p className="empty-hint">请先打开项目。</p>
+          ) : (
+            <>
+              <div className="action-grid compact">
+                <button
+                  aria-label="一键试验项目并确认"
+                  className="action primary"
+                  onClick={() => void runTrialBootstrap()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">G1</span>
+                  <span>
+                    <strong>一键试验项目并确认</strong>
+                    <small>trial.bootstrap → both gates</small>
+                  </span>
+                </button>
+                <button
+                  aria-label="刷新确认门状态"
+                  className="action"
+                  onClick={() => void refreshGateStatus()}
+                  disabled={busy !== null}
+                >
+                  <span className="action-no">G2</span>
+                  <span>
+                    <strong>刷新门状态</strong>
+                    <small>gate.status</small>
+                  </span>
+                </button>
+              </div>
+              {!gateSummary ? (
+                <p className="empty-hint">尚未评估确认门。</p>
+              ) : (
+                <div className="overview-columns">
+                  <div>
+                    <h4>门状态</h4>
+                    <ul className="job-list" aria-label="确认门列表">
+                      <li>
+                        <code>{gateSummary.storyStatus}</code> story_package · valid=
+                        {String(gateSummary.storyValid)}
+                      </li>
+                      <li>
+                        <code>{gateSummary.looksStatus}</code> identity_and_locations ·
+                        valid={String(gateSummary.looksValid)}
+                      </li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h4>批量生产</h4>
+                    <ul className="job-list" aria-label="生产就绪">
+                      <li>
+                        <code>{gateSummary.ready ? "ready" : "blocked"}</code>{" "}
+                        ready_for_batch_production
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+              <p className="empty-hint">
+                确认后目标修订集合哈希变化会使门失效。分镜/粗剪确认门属 M3/M4。
+              </p>
             </>
           )}
         </section>

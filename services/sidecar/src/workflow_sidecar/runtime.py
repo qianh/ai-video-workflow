@@ -27,6 +27,7 @@ from .persistence.creative_packs import CreativePackService
 from .persistence.director import DirectorService
 from .persistence.drafts import DraftService
 from .persistence.episode_scripts import EpisodeScriptService
+from .persistence.gates import GateService
 from .persistence.generation import GenerationService
 from .persistence.identity_packs import IdentityPackService
 from .persistence.locations import LocationService
@@ -244,6 +245,12 @@ class SidecarRuntime:
             await self._execute_director(request)
             return
 
+        if request.method.startswith("gate.") or request.method.startswith(
+            "trial."
+        ):
+            await self._execute_gates(request)
+            return
+
         if request.method.startswith("job."):
             await self._execute_job(request)
             return
@@ -339,6 +346,15 @@ class SidecarRuntime:
     def _director(self) -> DirectorService:
         self._workspace.require_project_db()
         return DirectorService(self._workspace.require_project_db())
+
+    def _gates(self) -> GateService:
+        current = self._workspace.current
+        if current is None:
+            raise ValueError("no project is open")
+        return GateService(
+            self._workspace.require_project_db(),
+            Path(current.root_path),
+        )
 
     def _resolve_branch_id(self, params: dict[str, Any]) -> str:
         branch_id = params.get("branch_id")
@@ -519,6 +535,68 @@ class SidecarRuntime:
                 raise ValueError("limit must be an integer")
             result = svc.list_package_revisions(limit=limit)
             self._emit(success_response(request.id, {"revisions": result}))
+            return
+
+        self._emit(
+            error_response(
+                request.id, "METHOD_NOT_FOUND", f"Unknown method: {request.method}"
+            )
+        )
+
+    async def _execute_gates(self, request: Request) -> None:
+        svc = self._gates()
+        method = request.method
+        params = request.params
+
+        if method == "gate.evaluate":
+            gate_type = params.get("gate_type")
+            if not isinstance(gate_type, str):
+                raise ValueError("gate_type must be a string")
+            result = svc.evaluate(
+                branch_id=self._resolve_branch_id(params),
+                gate_type=gate_type,
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "gate.confirm":
+            gate_id = params.get("gate_id")
+            if not isinstance(gate_id, str):
+                raise ValueError("gate_id must be a string")
+            result = svc.confirm(
+                gate_id,
+                confirmation_note=params.get("confirmation_note"),
+            )
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "gate.get":
+            gate_id = params.get("gate_id")
+            if not isinstance(gate_id, str):
+                raise ValueError("gate_id must be a string")
+            self._emit(success_response(request.id, svc.get_gate(gate_id)))
+            return
+
+        if method == "gate.list":
+            limit = params.get("limit", 50)
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValueError("limit must be an integer")
+            result = svc.list_gates(
+                branch_id=self._resolve_branch_id(params), limit=limit
+            )
+            self._emit(success_response(request.id, {"gates": result}))
+            return
+
+        if method == "gate.status":
+            result = svc.status(branch_id=self._resolve_branch_id(params))
+            self._emit(success_response(request.id, result))
+            return
+
+        if method == "trial.bootstrap":
+            result = svc.bootstrap_trial(
+                branch_id=self._resolve_branch_id(params)
+            )
+            self._emit(success_response(request.id, result))
             return
 
         self._emit(

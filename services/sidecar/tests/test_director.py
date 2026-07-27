@@ -59,7 +59,7 @@ def test_visual_and_director_inheritance(tmp_path: Path) -> None:
     parent = tmp_path / "projects"
     parent.mkdir()
     project = service.create_project(parent, "Dir")
-    assert project.schema_version >= 13
+    assert project.schema_version >= 14
 
     db = service.require_project_db()
     story = StoryService(db, Path(project.root_path))
